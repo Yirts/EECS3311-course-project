@@ -1,0 +1,25 @@
+# Local secrets (never commit real API keys)
+.env
+.env.*
+!.env.example
+config.local.json
+
+# The app's saved data
+data/
+
+# Build output
+target/
+
+# Eclipse
+.project
+.classpath
+.settings/
+bin/
+
+# Other IDEs
+.vscode/
+.idea/
+*.iml
+
+# Copies of each commit's files (not part of the repo)
+GitHub Commits/
