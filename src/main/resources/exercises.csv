@@ -1,0 +1,54 @@
+name,muscles,equipment,alternatives
+Barbell Bench Press,chest;triceps;shoulders,barbell,Dumbbell Bench Press;Machine Chest Press;Push Up
+Dumbbell Bench Press,chest;triceps;shoulders,dumbbell,Barbell Bench Press;Machine Chest Press;Push Up
+Incline Dumbbell Press,chest;shoulders;triceps,dumbbell,Dumbbell Bench Press;Pike Push Up
+Machine Chest Press,chest;triceps,machine,Dumbbell Bench Press;Push Up
+Push Up,chest;triceps;shoulders,none,Knee Push Up;Dumbbell Bench Press
+Knee Push Up,chest;triceps,none,Push Up;Machine Chest Press
+Cable Fly,chest,cable,Dumbbell Fly;Push Up
+Dumbbell Fly,chest,dumbbell,Cable Fly;Push Up
+Pull Up,back;biceps,pull-up bar,Lat Pulldown;Inverted Row
+Lat Pulldown,back;biceps,cable,Pull Up;Band Row
+Barbell Row,back;biceps,barbell,Dumbbell Row;Seated Cable Row
+Dumbbell Row,back;biceps,dumbbell,Barbell Row;Seated Cable Row;Inverted Row
+Seated Cable Row,back;biceps,cable,Dumbbell Row;Band Row
+Inverted Row,back;biceps,none,Dumbbell Row;Band Row
+Band Row,back;biceps,band,Inverted Row;Dumbbell Row
+Deadlift,back;hamstrings;glutes,barbell,Romanian Deadlift;Kettlebell Swing
+Romanian Deadlift,hamstrings;glutes;back,barbell,Dumbbell Romanian Deadlift;Glute Bridge
+Dumbbell Romanian Deadlift,hamstrings;glutes,dumbbell,Romanian Deadlift;Glute Bridge
+Barbell Squat,quads;glutes,barbell,Goblet Squat;Leg Press;Bodyweight Squat
+Goblet Squat,quads;glutes,dumbbell,Barbell Squat;Leg Press;Bodyweight Squat
+Leg Press,quads;glutes,machine,Barbell Squat;Goblet Squat
+Bodyweight Squat,quads;glutes,none,Goblet Squat;Walking Lunge
+Bulgarian Split Squat,quads;glutes,dumbbell,Walking Lunge;Goblet Squat
+Walking Lunge,quads;glutes,none,Bulgarian Split Squat;Bodyweight Squat
+Leg Extension,quads,machine,Goblet Squat;Walking Lunge
+Leg Curl,hamstrings,machine,Dumbbell Romanian Deadlift;Glute Bridge
+Glute Bridge,glutes;hamstrings,none,Hip Thrust;Dumbbell Romanian Deadlift
+Hip Thrust,glutes;hamstrings,barbell,Glute Bridge;Kettlebell Swing
+Kettlebell Swing,glutes;hamstrings;back,kettlebell,Glute Bridge;Dumbbell Romanian Deadlift
+Standing Calf Raise,calves,none,Seated Calf Raise
+Seated Calf Raise,calves,machine,Standing Calf Raise
+Overhead Press,shoulders;triceps,barbell,Dumbbell Shoulder Press;Pike Push Up
+Dumbbell Shoulder Press,shoulders;triceps,dumbbell,Overhead Press;Pike Push Up
+Pike Push Up,shoulders;triceps,none,Dumbbell Shoulder Press;Push Up
+Lateral Raise,shoulders,dumbbell,Cable Lateral Raise;Band Lateral Raise
+Cable Lateral Raise,shoulders,cable,Lateral Raise;Band Lateral Raise
+Band Lateral Raise,shoulders,band,Lateral Raise;Cable Lateral Raise
+Face Pull,shoulders;back,cable,Band Pull Apart
+Band Pull Apart,shoulders;back,band,Face Pull
+Barbell Curl,biceps,barbell,Dumbbell Curl;Band Curl
+Dumbbell Curl,biceps,dumbbell,Barbell Curl;Hammer Curl;Band Curl
+Hammer Curl,biceps,dumbbell,Dumbbell Curl;Band Curl
+Band Curl,biceps,band,Dumbbell Curl;Hammer Curl
+Tricep Pushdown,triceps,cable,Overhead Tricep Extension;Bench Dip
+Overhead Tricep Extension,triceps,dumbbell,Tricep Pushdown;Bench Dip
+Bench Dip,triceps,none,Tricep Pushdown;Overhead Tricep Extension
+Plank,core,none,Dead Bug;Side Plank
+Side Plank,core,none,Plank;Bird Dog
+Dead Bug,core,none,Plank;Bird Dog
+Bird Dog,core;back,none,Dead Bug;Plank
+Hanging Leg Raise,core,pull-up bar,Lying Leg Raise;Dead Bug
+Lying Leg Raise,core,none,Hanging Leg Raise;Dead Bug
+Cable Crunch,core,cable,Lying Leg Raise;Plank
