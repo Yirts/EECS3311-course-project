@@ -5,7 +5,7 @@
 config.local.json
 
 # The app's saved data
-data/
+/data/
 
 # Build output
 target/
