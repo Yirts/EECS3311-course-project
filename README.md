@@ -24,3 +24,7 @@ mvn javafx:run
 ## Local configuration
 
 The AI features need an Anthropic API key. Copy `.env.example` to `.env` and replace the placeholder with your own key. `.env` is listed in `.gitignore`, so it is never committed.
+
+`CLAUDE_MODEL` in `.env` picks the Claude model (`claude-sonnet-5` by default). When `.env` has a key, two of the tests make one small real call to Claude. Without a key they are skipped.
+
+The app saves its data (profile, plan, workout history, coach memory and reports) in the `data` folder, which is not committed.

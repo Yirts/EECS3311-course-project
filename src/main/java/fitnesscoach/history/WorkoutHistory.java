@@ -13,7 +13,7 @@ public class WorkoutHistory
 	private List<WorkoutLog> logs;
 	private WorkoutLog currentLog;
 	private List<CheckIn> checkIns;
-	private List<WorkoutObserver> observers;
+	private transient List<WorkoutObserver> observers; //not saved to the file
 
 
 	public WorkoutHistory()

@@ -8,7 +8,7 @@ public class Exercise
 	private String name;
 	private List<String> muscles;
 	private String equipment;
-	private List<Exercise> alternatives;
+	private transient List<Exercise> alternatives; //not saved, the library links them again
 
 
 	public Exercise(String name, List<String> muscles, String equipment)
