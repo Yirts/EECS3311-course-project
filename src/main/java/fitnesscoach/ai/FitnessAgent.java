@@ -1,5 +1,6 @@
 package fitnesscoach.ai;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,6 +27,8 @@ public class FitnessAgent
 			+ "- remember: saves something important about the user for next time. Input: the fact.\n"
 			+ "  Example: TOOL remember: the user prefers morning workouts\n"
 			+ "To use a tool, reply with only one line that starts with TOOL, like the examples. You will get the result and can use another tool.\n"
+			+ "Always use the history tool before you answer a question about the user's workouts, progress or check-ins. "
+			+ "Never say there is no data before you have looked with the history tool.\n"
 			+ "When you have what you need, reply with your final answer and do not write TOOL.\n";
 
 	private AIModel mainModel;
@@ -90,7 +93,9 @@ public class FitnessAgent
 				memoryText += "- " + fact + "\n";
 			}
 		}
-		String conversation = TOOL_INSTRUCTIONS + "\n" + memoryText + "\n" + prompt;
+		String dayName = LocalDate.now().getDayOfWeek().toString();
+		dayName = dayName.charAt(0) + dayName.substring(1).toLowerCase(); //WEDNESDAY becomes Wednesday
+		String conversation = TOOL_INSTRUCTIONS + "Today is " + dayName + " " + LocalDate.now() + ".\n\n" + memoryText + "\n" + prompt;
 
 		for (int step = 0; step < MAX_STEPS; step++)
 		{
@@ -110,12 +115,24 @@ public class FitnessAgent
 
 			String reply = model.send(conversation).trim();
 
+			//look for "TOOL name: input" anywhere, small models sometimes write it in the middle of a sentence
 			String toolLine = null;
-			for (String line : reply.split("\n"))
+			int toolStart = reply.indexOf("TOOL ");
+			if (toolStart != -1)
 			{
-				if (line.trim().startsWith("TOOL ") && toolLine == null)
+				toolLine = reply.substring(toolStart);
+				if (toolLine.contains("\n"))
 				{
-					toolLine = line.trim();
+					toolLine = toolLine.substring(0, toolLine.indexOf("\n"));
+				}
+				if (toolLine.contains(")"))
+				{
+					toolLine = toolLine.substring(0, toolLine.indexOf(")")); //it was written inside brackets
+				}
+				toolLine = toolLine.trim();
+				while (toolLine.endsWith(".") || toolLine.endsWith(","))
+				{
+					toolLine = toolLine.substring(0, toolLine.length() - 1);
 				}
 			}
 
@@ -133,7 +150,8 @@ public class FitnessAgent
 			}
 			toolName = toolName.trim();
 
-			conversation += "\n\nYou asked: " + toolLine + "\nTool result:\n" + useTool(toolName, input);
+			conversation += "\n\nYou asked: " + toolLine + "\nTool result:\n" + useTool(toolName, input)
+					+ "\nUse this result to answer the user, or use another tool if you need more.";
 		}
 
 		//too many tools in a row, so ask for the answer with what it has
@@ -175,7 +193,7 @@ public class FitnessAgent
 			}
 			if (ans.isEmpty())
 			{
-				return "No exercises found for that muscle and equipment.";
+				return "No exercises found for that muscle and equipment. The muscle has to be one of: back, biceps, calves, chest, core, glutes, hamstrings, quads, shoulders, triceps.";
 			}
 			return ans;
 		}

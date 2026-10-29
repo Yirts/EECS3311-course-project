@@ -163,6 +163,30 @@ class FitnessAgentTester
 		assertEquals(50, agent.getMemory().size(), "Failed Test 12 answerQuestion");
 	}
 
+	//tool asked for in the middle of a sentence is still used (the local llama model does this)
+	@Test
+	void test_answerQuestion_13()
+	{
+		FakeModel llama = new FakeModel("Let me check your workout history (TOOL history: 14) first.", "You did great.");
+		FitnessAgent agent = new FitnessAgent(llama, null, new WorkoutHistory());
+
+		agent.answerQuestion("How did my bench press go this week?");
+
+		assertTrue(llama.prompts.get(1).contains("Workouts in the last 14 days"), "Failed Test 13 answerQuestion");
+	}
+
+	//full stop after the tool is ignored
+	@Test
+	void test_answerQuestion_14()
+	{
+		FakeModel llama = new FakeModel("TOOL history: 14.", "You did great.");
+		FitnessAgent agent = new FitnessAgent(llama, null, new WorkoutHistory());
+
+		agent.answerQuestion("How did my bench press go this week?");
+
+		assertTrue(llama.prompts.get(1).contains("Workouts in the last 14 days"), "Failed Test 14 answerQuestion");
+	}
+
 	//memory loaded from the data store is used
 	@Test
 	void test_setMemory_1()
