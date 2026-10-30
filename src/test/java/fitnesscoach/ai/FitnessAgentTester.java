@@ -420,7 +420,7 @@ class FitnessAgentTester
     }
 
     @Test
-    void changePlanWithAnEmptyDayRemovesThatWorkout() {
+    void changePlanWithARestDayRemovesThatWorkout() {
         WorkoutPlan plan = mondayPlan(2);
         LocalDate firstMonday = plan.getDays().get(0).getDate();
         FitnessAgent agent = new FitnessAgent(new FakeModel("DAY " + firstMonday + ": Rest"), null, new WorkoutHistory());
@@ -428,6 +428,17 @@ class FitnessAgentTester
         WorkoutPlan changed = agent.changePlan(plan, newProfile(), "I am away on monday");
 
         assertEquals(1, changed.getDays().size());
+    }
+
+    @Test
+    void changePlanSkipsAnEmptyDayThatIsNotARestDay() {
+        // the local Llama model sometimes writes a DAY line without its exercises
+        WorkoutPlan plan = mondayPlan(2);
+        FitnessAgent agent = new FitnessAgent(new FakeModel("DAY monday: Upper body (30 minutes, as you asked)"), null, new WorkoutHistory());
+
+        WorkoutPlan changed = agent.changePlan(plan, newProfile(), "only 30 minutes on mondays");
+
+        assertEquals(2, changed.getDays().size());
     }
 
     @Test
@@ -464,10 +475,113 @@ class FitnessAgentTester
         assertNull(agent.changePlan(mondayPlan(1), newProfile(), "legs instead"));
     }
 
+    // ----- F04: pickSwapOptions() -----
+
+    @Test
+    void pickSwapOptionsGivesTheAisThreePicksWithReasons() {
+        FakeModel claude = new FakeModel("Goblet Squat | easier on the lower back\nLeg Press | the machine keeps you steady\n"
+                + "Bodyweight Squat | no weight on the spine");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        List<String> options = agent.pickSwapOptions(planned("Barbell Squat"), "my lower back hurts", profileWith("equipment: dumbbell, machine"));
+
+        assertEquals(List.of("Goblet Squat: easier on the lower back", "Leg Press: the machine keeps you steady",
+                "Bodyweight Squat: no weight on the spine"), options);
+    }
+
+    @Test
+    void pickSwapOptionsSendsTheReasonAndTheMatchesToTheAi() {
+        FakeModel claude = new FakeModel("Goblet Squat | easier");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        agent.pickSwapOptions(planned("Barbell Squat"), "the squat rack is busy", profileWith("equipment: dumbbell"));
+
+        assertTrue(claude.prompts.get(0).contains("the squat rack is busy"));
+        assertTrue(claude.prompts.get(0).contains("Bulgarian Split Squat"));
+    }
+
+    @Test
+    void pickSwapOptionsReadsANumberedList() {
+        FakeModel claude = new FakeModel("1. Goblet Squat | easier\n2. Bodyweight Squat | no equipment\n3. Walking Lunge | one leg at a time");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        List<String> options = agent.pickSwapOptions(planned("Barbell Squat"), "busy", profileWith("equipment: dumbbell"));
+
+        assertEquals("Goblet Squat: easier", options.get(0));
+    }
+
+    @Test
+    void pickSwapOptionsOnlyOffersExercisesForTheUsersEquipment() {
+        // the AI picks the Leg Press, but the user has no machine, so the first matches are used instead
+        FitnessAgent agent = new FitnessAgent(new FakeModel("Leg Press | easy to learn"), null, new WorkoutHistory());
+
+        List<String> options = agent.pickSwapOptions(planned("Barbell Squat"), "busy", profileWith("equipment: dumbbell"));
+
+        assertEquals(List.of("Goblet Squat", "Bodyweight Squat", "Bulgarian Split Squat"), options);
+    }
+
+    @Test
+    void pickSwapOptionsWithoutAnAiGivesNamesOnly() {
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        List<String> options = agent.pickSwapOptions(planned("Barbell Squat"), "busy", profileWith("equipment: dumbbell"));
+
+        assertEquals(List.of("Goblet Squat", "Bodyweight Squat", "Bulgarian Split Squat"), options);
+    }
+
+    @Test
+    void pickSwapOptionsSkipsAvoidedExercises() {
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+        UserProfile profile = profileWith("equipment: dumbbell");
+        profile.addBoundary("avoid: Goblet Squat");
+
+        List<String> options = agent.pickSwapOptions(planned("Barbell Squat"), "busy", profile);
+
+        assertEquals(List.of("Bodyweight Squat", "Bulgarian Split Squat", "Walking Lunge"), options);
+    }
+
+    @Test
+    void pickSwapOptionsWidensTheSearchWhenFewExercisesMatch() {
+        // without equipment only the Glute Bridge works the hamstrings, so the glutes and back are searched too (UC04 2a)
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        List<String> options = agent.pickSwapOptions(planned("Romanian Deadlift"), "no barbell", newProfile());
+
+        assertEquals(List.of("Glute Bridge", "Bodyweight Squat", "Walking Lunge"), options);
+    }
+
+    @Test
+    void pickSwapOptionsWithNoMatchesIsEmptyAndDoesNotAskTheAi() {
+        // the standing calf raise is the only calf exercise without equipment
+        FakeModel claude = new FakeModel();
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        List<String> options = agent.pickSwapOptions(planned("Standing Calf Raise"), "boring", newProfile());
+
+        assertTrue(options.isEmpty());
+        assertTrue(claude.prompts.isEmpty());
+    }
+
     private static final String MONDAY_PUSH_UPS = "DAY monday: Upper body\nPush Up | 3 | 10 | 0";
 
     private UserProfile newProfile() {
         return new UserProfile(25, 180, 80, "beginner");
+    }
+
+    private UserProfile profileWith(String boundary) {
+        UserProfile profile = newProfile();
+        profile.addBoundary(boundary);
+        return profile;
+    }
+
+    private PlannedExercise planned(String exerciseName) {
+        return new PlannedExercise(ExerciseLibrary.getInstance().findExercise(exerciseName), 3, 8, 60);
     }
 
     // a plan with push ups on mondays, made by an agent with its own fake model

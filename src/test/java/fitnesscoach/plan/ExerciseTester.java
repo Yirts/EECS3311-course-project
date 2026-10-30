@@ -28,4 +28,22 @@ class ExerciseTester
 
 		assertEquals(pushUp, bench.getAlternatives().get(0), "Failed Test 2 getAlternatives");
 	}
+
+
+    // ----- getStartingWeight() -----
+
+    @Test
+    void startingWeightForABarbellIsTheEmptyBar() {
+        assertEquals(20.0, ExerciseLibrary.getInstance().findExercise("Barbell Squat").getStartingWeight());
+    }
+
+    @Test
+    void startingWeightForDumbbellsIsLight() {
+        assertEquals(5.0, ExerciseLibrary.getInstance().findExercise("Goblet Squat").getStartingWeight());
+    }
+
+    @Test
+    void startingWeightForABodyweightExerciseIsZero() {
+        assertEquals(0.0, ExerciseLibrary.getInstance().findExercise("Push Up").getStartingWeight());
+    }
 }

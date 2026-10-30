@@ -66,29 +66,33 @@ public class DataStore
 	}
 
 
-	public WorkoutPlan loadPlan()
-	{
-		String text = readFile("plan.json");
-		if (text == null)
-		{
-			return null; //no plan saved yet
-		}
-		WorkoutPlan plan = gson.fromJson(text, WorkoutPlan.class);
+    public WorkoutPlan loadPlan() {
+        String text = readFile("plan.json");
+        if (text == null) {
+            return null; // no plan saved yet
+        }
+        WorkoutPlan plan = gson.fromJson(text, WorkoutPlan.class);
+        useLibraryExercises(plan);
+        return plan;
+    }
 
-		//use the library's copy of each exercise so the whole app shares the same ones
-		for (WorkoutDay day : plan.getDays())
-		{
-			for (PlannedExercise planned : day.getExercises())
-			{
-				Exercise fromLibrary = ExerciseLibrary.getInstance().findExercise(planned.getExercise().getName());
-				if (fromLibrary != null)
-				{
-					planned.setExercise(fromLibrary);
-				}
-			}
-		}
-		return plan;
-	}
+    // the facade's undo stack (oldest first), so "fitagent plan undo" still works the next time the app starts (F03)
+    public void saveOldPlans(List<WorkoutPlan> oldPlans) {
+        writeFile("old-plans.json", gson.toJson(oldPlans));
+    }
+
+    public List<WorkoutPlan> loadOldPlans() {
+        ArrayList<WorkoutPlan> oldPlans = new ArrayList<>();
+        String text = readFile("old-plans.json");
+        if (text == null) {
+            return oldPlans; // nothing saved yet
+        }
+        for (WorkoutPlan plan : gson.fromJson(text, WorkoutPlan[].class)) {
+            useLibraryExercises(plan);
+            oldPlans.add(plan);
+        }
+        return oldPlans;
+    }
 
 
 	public void saveHistory(WorkoutHistory history)
@@ -193,4 +197,17 @@ public class DataStore
 			return null; //the file does not exist yet
 		}
 	}
+
+
+    // use the library's copy of each exercise, so the whole app shares the same ones (with their alternatives)
+    private void useLibraryExercises(WorkoutPlan plan) {
+        for (WorkoutDay day : plan.getDays()) {
+            for (PlannedExercise planned : day.getExercises()) {
+                Exercise fromLibrary = ExerciseLibrary.getInstance().findExercise(planned.getExercise().getName());
+                if (fromLibrary != null) {
+                    planned.setExercise(fromLibrary);
+                }
+            }
+        }
+    }
 }

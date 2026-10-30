@@ -3,7 +3,9 @@ package fitnesscoach.controller;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.nio.file.Path;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -13,11 +15,15 @@ import org.junit.jupiter.api.io.TempDir;
 import fitnesscoach.ai.AIModel;
 import fitnesscoach.data.DataStore;
 import fitnesscoach.data.UserProfile;
+import fitnesscoach.plan.ExerciseLibrary;
+import fitnesscoach.plan.PlannedExercise;
+import fitnesscoach.plan.WorkoutDay;
 import fitnesscoach.plan.WorkoutPlan;
 
 class FitnessAppFacadeTest {
     private static final String MONDAY_PUSH_UPS = "DAY monday: Upper body\nPush Up | 3 | 10 | 0";
     private static final String MONDAY_SQUATS = "DAY monday: Legs\nBodyweight Squat | 3 | 10 | 0";
+    private static final String MONDAY_BRIDGES = "DAY monday: Legs\nGlute Bridge | 3 | 12 | 0";
 
     @TempDir
     Path folder;
@@ -258,8 +264,300 @@ class FitnessAppFacadeTest {
         assertSame(plan, app.getCurrentPlan());
     }
 
+    @Test
+    void undoAfterGeneratingDropsTheNewPlan() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel(MONDAY_PUSH_UPS));
+        app.generatePlan(2);
+
+        app.undoChange();
+
+        assertNull(app.getCurrentPlan());
+    }
+
+    // ----- F03: requestChange() and undoChange() -----
+
+    @Test
+    void requestChangeWithoutAPlanThrows() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        assertThrows(IllegalStateException.class, () -> app.requestChange("only 30 minutes on tuesday"));
+    }
+
+    @Test
+    void requestChangeWithAnEmptyRequestThrows() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel());
+
+        assertThrows(IllegalArgumentException.class, () -> app.requestChange(" "));
+    }
+
+    @Test
+    void requestChangeReturnsTheChangedPlan() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel(MONDAY_BRIDGES));
+
+        WorkoutPlan newPlan = app.requestChange("legs on mondays");
+
+        assertEquals("Glute Bridge", exerciseOn(newPlan, 0));
+    }
+
+    @Test
+    void requestChangeKeepsTheSavedPlanUntilTheUserConfirms() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel(MONDAY_BRIDGES));
+
+        app.requestChange("legs on mondays");
+
+        assertEquals("Push Up", exerciseOn(savedData().loadPlan(), 0));
+    }
+
+    @Test
+    void requestChangeRunsTheSafetyCheck() {
+        FakeModel model = new FakeModel(MONDAY_SQUATS, MONDAY_BRIDGES);
+        FitnessAppFacade app = makeAppWithPlan(model, "avoid: quads");
+
+        app.requestChange("legs on mondays");
+
+        assertTrue(model.prompts.get(1).contains("Fix these problems"));
+    }
+
+    @Test
+    void requestChangeDoesNotTryToFixDaysThatAlreadyHappened() {
+        // last week's squats break the "avoid: quads" boundary, but that day can't change any more
+        UserProfile profile = newProfile();
+        profile.addBoundary("avoid: quads");
+        savedData().saveProfile(profile);
+        WorkoutPlan plan = new WorkoutPlan(LocalDate.now().minusWeeks(1));
+        plan.getDays().add(makeDay(LocalDate.now().minusDays(7), "Bodyweight Squat"));
+        plan.getDays().add(makeDay(LocalDate.now().plusDays(7), "Push Up"));
+        savedData().savePlan(plan);
+        FakeModel model = new FakeModel("DAY " + LocalDate.now().plusDays(7) + ": Upper body\nKnee Push Up | 3 | 10 | 0");
+        FitnessAppFacade app = makeApp(model);
+
+        app.requestChange("easier push ups");
+
+        assertEquals(1, model.prompts.size());
+    }
+
+    @Test
+    void requestChangeWhenTheAiIsOfflineReturnsNull() {
+        FakeModel model = new FakeModel();
+        model.available = false;
+        FitnessAppFacade app = makeAppWithPlan(model);
+
+        assertNull(app.requestChange("legs on mondays"));
+    }
+
+    @Test
+    void confirmingAChangeSavesTheNewPlan() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel(MONDAY_BRIDGES));
+
+        app.acceptPlan(app.requestChange("legs on mondays"));
+
+        assertEquals("Glute Bridge", exerciseOn(savedData().loadPlan(), 0));
+    }
+
+    @Test
+    void undoBeforeConfirmingKeepsTheCurrentPlan() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel(MONDAY_BRIDGES));
+        WorkoutPlan before = app.getCurrentPlan();
+        app.requestChange("legs on mondays");
+
+        app.undoChange();
+
+        assertSame(before, app.getCurrentPlan());
+    }
+
+    @Test
+    void undoAfterConfirmingPutsTheOldPlanBack() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel(MONDAY_BRIDGES));
+        WorkoutPlan before = app.getCurrentPlan();
+        app.acceptPlan(app.requestChange("legs on mondays"));
+
+        app.undoChange();
+
+        assertSame(before, app.getCurrentPlan());
+    }
+
+    @Test
+    void undoSavesTheOldPlan() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel(MONDAY_BRIDGES));
+        app.acceptPlan(app.requestChange("legs on mondays"));
+
+        app.undoChange();
+
+        assertEquals("Push Up", exerciseOn(savedData().loadPlan(), 0));
+    }
+
+    @Test
+    void undoStillWorksAfterTheAppRestarts() {
+        FitnessAppFacade first = makeAppWithPlan(new FakeModel(MONDAY_BRIDGES));
+        first.acceptPlan(first.requestChange("legs on mondays"));
+
+        FitnessAppFacade second = makeApp(new FakeModel());
+        second.undoChange();
+
+        assertEquals("Push Up", exerciseOn(second.getCurrentPlan(), 0));
+    }
+
+    @Test
+    void undoWithNothingToUndoThrows() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel());
+
+        assertThrows(IllegalStateException.class, () -> app.undoChange());
+    }
+
+    @Test
+    void acceptPlanKeepsAtMostTenOldPlans() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        for (int i = 0; i < 12; i++) {
+            app.acceptPlan(new WorkoutPlan(LocalDate.now()));
+        }
+
+        assertEquals(10, savedData().loadOldPlans().size());
+    }
+
+    // ----- F04: findSwapOptions() and swapExercise() -----
+
+    @Test
+    void findSwapOptionsReturnsTheOptionsFromTheAgent() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel("Knee Push Up | easier on the wrists"));
+
+        List<String> options = app.findSwapOptions(firstPushUp(app), "my wrists hurt");
+
+        assertEquals("Knee Push Up: easier on the wrists", options.get(0));
+    }
+
+    @Test
+    void findSwapOptionsLeavesOutExercisesAlreadyInThatWorkout() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel("Knee Push Up | easier\nPike Push Up | more shoulders"));
+        WorkoutDay firstDay = app.getCurrentPlan().getDays().get(0);
+        firstDay.getExercises().add(new PlannedExercise(ExerciseLibrary.getInstance().findExercise("Knee Push Up"), 3, 10, 0));
+
+        List<String> options = app.findSwapOptions(firstPushUp(app), "bored");
+
+        assertEquals("Pike Push Up: more shoulders", options.get(0));
+    }
+
+    @Test
+    void swapExerciseChangesTheChosenDay() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel());
+
+        app.swapExercise(firstPushUp(app), "Knee Push Up", false);
+
+        assertEquals("Knee Push Up", exerciseOn(app.getCurrentPlan(), 0));
+    }
+
+    @Test
+    void swapExerciseForOneDayLeavesTheOtherDays() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel());
+
+        app.swapExercise(firstPushUp(app), "Knee Push Up", false);
+
+        assertEquals("Push Up", exerciseOn(app.getCurrentPlan(), 1));
+    }
+
+    @Test
+    void swapExerciseForTheRestOfThePlanChangesEveryDay() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel());
+
+        app.swapExercise(firstPushUp(app), "Knee Push Up", true);
+
+        assertEquals("Knee Push Up", exerciseOn(app.getCurrentPlan(), 1));
+    }
+
+    @Test
+    void swapExerciseSavesThePlan() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel());
+
+        app.swapExercise(firstPushUp(app), "Knee Push Up", false);
+
+        assertEquals("Knee Push Up", exerciseOn(savedData().loadPlan(), 0));
+    }
+
+    @Test
+    void swapExerciseTakesAWholeOption() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel());
+
+        app.swapExercise(firstPushUp(app), "Knee Push Up: easier on the wrists", false);
+
+        assertEquals("Knee Push Up", exerciseOn(app.getCurrentPlan(), 0));
+    }
+
+    @Test
+    void swapExerciseWithAnUnknownExerciseThrows() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel());
+
+        assertThrows(IllegalArgumentException.class, () -> app.swapExercise(firstPushUp(app), "Flying Kick", false));
+    }
+
+    @Test
+    void swapExerciseKeepsTheSetsAndReps() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel());
+        PlannedExercise pushUp = firstPushUp(app);
+
+        app.swapExercise(pushUp, "Knee Push Up", false);
+
+        assertEquals(10, pushUp.getReps());
+    }
+
+    @Test
+    void swapToOtherEquipmentStartsWithALightWeight() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel());
+        PlannedExercise pushUp = firstPushUp(app);
+
+        app.swapExercise(pushUp, "Dumbbell Bench Press", false);
+
+        assertEquals(5.0, pushUp.getWeightKg());
+    }
+
+    @Test
+    void swapBecauseOfPainAddsABoundary() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel("Knee Push Up | less weight on the shoulder"));
+        PlannedExercise pushUp = firstPushUp(app);
+        app.findSwapOptions(pushUp, "my shoulder hurts");
+
+        app.swapExercise(pushUp, "Knee Push Up", true);
+
+        assertTrue(savedData().loadProfile().getBoundaries().contains("avoid: Push Up"));
+    }
+
+    @Test
+    void swapForAnotherReasonAddsNoBoundary() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel("Knee Push Up | something new"));
+        PlannedExercise pushUp = firstPushUp(app);
+        app.findSwapOptions(pushUp, "I am bored of it");
+
+        app.swapExercise(pushUp, "Knee Push Up", true);
+
+        assertTrue(savedData().loadProfile().getBoundaries().isEmpty());
+    }
+
     private UserProfile newProfile() {
         return new UserProfile(25, 180, 80, "beginner");
+    }
+
+    // a facade that starts with a saved profile and a saved plan with push ups on the next two mondays
+    private FitnessAppFacade makeAppWithPlan(FakeModel model, String... boundaries) {
+        WorkoutPlan plan = new WorkoutPlan(LocalDate.now());
+        LocalDate monday = LocalDate.now().with(TemporalAdjusters.nextOrSame(DayOfWeek.MONDAY));
+        plan.getDays().add(makeDay(monday, "Push Up"));
+        plan.getDays().add(makeDay(monday.plusWeeks(1), "Push Up"));
+        savedData().savePlan(plan);
+        return makeAppWithProfile(model, boundaries);
+    }
+
+    private WorkoutDay makeDay(LocalDate date, String exerciseName) {
+        WorkoutDay day = new WorkoutDay(date, "Workout");
+        day.getExercises().add(new PlannedExercise(ExerciseLibrary.getInstance().findExercise(exerciseName), 3, 10, 0));
+        return day;
+    }
+
+    private PlannedExercise firstPushUp(FitnessAppFacade app) {
+        return app.getCurrentPlan().getDays().get(0).getExercises().get(0);
+    }
+
+    // the name of the first exercise on one day of the plan
+    private String exerciseOn(WorkoutPlan plan, int dayIndex) {
+        return plan.getDays().get(dayIndex).getExercises().get(0).getExercise().getName();
     }
 
     // the data store the facade saves to, read back again

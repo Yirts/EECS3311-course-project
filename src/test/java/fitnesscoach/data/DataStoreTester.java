@@ -247,6 +247,40 @@ class DataStoreTester
 	}
 
 
+    // ----- saveOldPlans() and loadOldPlans(): the undo stack (F03) -----
+
+    @Test
+    void loadOldPlansWithNothingSavedIsEmpty() {
+        DataStore store = new DataStore(folder.toString());
+
+        assertTrue(store.loadOldPlans().isEmpty());
+    }
+
+    @Test
+    void loadOldPlansKeepsTheOrder() {
+        DataStore store = new DataStore(folder.toString());
+        ArrayList<WorkoutPlan> oldPlans = new ArrayList<>();
+        oldPlans.add(new WorkoutPlan(LocalDate.of(2026, 10, 1)));
+        oldPlans.add(new WorkoutPlan(LocalDate.of(2026, 10, 15)));
+
+        store.saveOldPlans(oldPlans);
+
+        assertEquals(LocalDate.of(2026, 10, 15), store.loadOldPlans().get(1).getStartDate());
+    }
+
+    @Test
+    void loadOldPlansUsesTheLibraryExercises() {
+        DataStore store = new DataStore(folder.toString());
+        ArrayList<WorkoutPlan> oldPlans = new ArrayList<>();
+        oldPlans.add(makePlan());
+
+        store.saveOldPlans(oldPlans);
+        PlannedExercise loaded = store.loadOldPlans().get(0).getDays().get(0).getExercises().get(0);
+
+        assertSame(ExerciseLibrary.getInstance().findExercise("Barbell Squat"), loaded.getExercise());
+    }
+
+
 	private WorkoutPlan makePlan()
 	{
 		WorkoutPlan plan = new WorkoutPlan(LocalDate.of(2026, 11, 2));

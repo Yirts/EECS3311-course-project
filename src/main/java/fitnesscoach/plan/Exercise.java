@@ -42,4 +42,22 @@ public class Exercise
 	{
 		return alternatives;
 	}
+
+
+    // a light weight to start with on this exercise's equipment. The weight progression raises it after each workout
+    public double getStartingWeight() {
+        switch (equipment) {
+            case "barbell":
+                return 20; // the empty bar
+            case "dumbbell":
+                return 5;
+            case "kettlebell":
+                return 8;
+            case "machine":
+            case "cable":
+                return 10;
+            default:
+                return 0; // bodyweight, bands and the pull-up bar
+        }
+    }
 }

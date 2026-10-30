@@ -23,6 +23,9 @@ A Java desktop app with a JavaFX GUI and a command-line interface (CLI). An AI a
 | `profile setup` | Asks for your age, height, weight, experience and notes (injuries, goal, equipment, free days, workout length). The AI turns the notes into boundaries, and you confirm them (F01) |
 | `plan generate --weeks 8` | The AI builds a plan of 1 to 12 weeks (4 if no number is given) that passes the safety check. You accept it, regenerate it or cancel (F02) |
 | `plan show` | Shows your saved plan |
+| `plan change "only 30 minutes on tuesday"` | The AI changes only the workouts your request is about. You see the changed days, then confirm, undo, regenerate or edit the request (F03) |
+| `plan undo` | Puts back your plan from before the last change, even after the app was closed (F03) |
+| `exercise swap "Barbell Squat" --reason pain` | Gives 3 other exercises for the same muscles with your equipment, each with a reason. You pick one for that day or the rest of the plan. If the reason is pain, future plans avoid the old exercise (F04) |
 
 ## Run it with Maven
 

@@ -155,7 +155,10 @@ public class FitnessAgent
                 + "Change the plan for this request:\n" + request + "\n"
                 + "Only write the days that change. \"DAY YYYY-MM-DD: ...\" changes one date, "
                 + "and \"DAY monday: ...\" changes every monday in the plan. "
-                + "To remove a workout, write its DAY line with no exercises under it.\n"
+                + "To remove a workout, name it rest and write no exercises under it, like \"DAY 2026-11-03: rest\". "
+                + "If the change is only for a while, like next week, only change those dates, so the plan goes back to normal after. "
+                + "If the request is not safe, make the closest safe change instead. "
+                + "Put the reason for each change in the workout name, for example \"DAY tuesday: Upper body (30 minutes, as you asked)\".\n"
                 + PLAN_FORMAT;
 
         String reply = runAgentLoop(prompt);
@@ -170,6 +173,59 @@ public class FitnessAgent
         }
         applyDays(changed, reply, from, findEnd(plan));
         return changed;
+    }
+
+    /**
+     * F04: finds library exercises that could replace this one, then asks the AI to pick the best 3 for the reason,
+     * each with a short explanation, like "Goblet Squat: easier on the lower back".
+     * When no AI model can be reached, the options are only the exercise names (UC04 3a).
+     */
+    public List<String> pickSwapOptions(PlannedExercise exercise, String reason, UserProfile profile) {
+        ArrayList<String> options = new ArrayList<>();
+        List<Exercise> matches = findSwapMatches(exercise.getExercise(), profile);
+        if (matches.isEmpty()) {
+            return options;
+        }
+
+        String matchList = "";
+        for (Exercise match : matches) {
+            matchList += "- " + match.getName() + " (works " + String.join(", ", match.getMuscles()) + ", needs " + match.getEquipment() + ")\n";
+        }
+        String prompt = "The user wants to replace " + exercise.getExercise().getName() + " in their plan because: " + reason + "\n"
+                + "These exercises from the library work the same muscles and fit the user's equipment:\n" + matchList + "\n"
+                + describeProfile(profile)
+                + "Pick the 3 best replacements for the user's reason, best first, and say in one short sentence why each one fits.\n"
+                + "Write exactly 3 lines in this format, with nothing before or after them:\n"
+                + "<exercise name from the list> | <why it is a good replacement>\n";
+
+        String reply = runAgentLoop(prompt);
+        if (reply != null) {
+            for (String line : reply.split("\n")) {
+                line = cleanLine(line);
+                if (line.contains("|")) {
+                    String name = line.substring(0, line.indexOf("|")).trim();
+                    String why = line.substring(line.indexOf("|") + 1).trim();
+                    for (Exercise match : matches) {
+                        // only exercises from the list, so the AI can not make one up
+                        if (options.size() < 3 && match.getName().equalsIgnoreCase(name) && !hasOption(options, match.getName())) {
+                            if (why.isEmpty()) {
+                                options.add(match.getName());
+                            } else {
+                                options.add(match.getName() + ": " + why);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // no AI, or it picked fewer than 3, so fill up with the first matches, without an explanation
+        for (Exercise match : matches) {
+            if (options.size() < 3 && !hasOption(options, match.getName())) {
+                options.add(match.getName());
+            }
+        }
+        return options;
     }
 
 
@@ -426,7 +482,7 @@ public class FitnessAgent
 
     // reads the DAY blocks in a plan written by the AI and puts them in the plan.
     // "DAY 2026-11-03: ..." changes only that date, "DAY monday: ..." changes every monday from "from" to "end",
-    // and a DAY with no exercises under it becomes a rest day
+    // and "DAY 2026-11-03: rest" with no exercises removes that workout
     private void applyDays(WorkoutPlan plan, String text, LocalDate from, LocalDate end) {
         ArrayList<String> headers = new ArrayList<>();
         ArrayList<WorkoutDay> workouts = new ArrayList<>();
@@ -453,10 +509,15 @@ public class FitnessAgent
         }
 
         for (int i = 0; i < workouts.size(); i++) {
-            for (LocalDate date : findDates(headers.get(i), from, end)) {
-                plan.getDays().removeIf(day -> day.getDate().equals(date));
-                if (!workouts.get(i).getExercises().isEmpty()) {
-                    plan.getDays().add(copyDay(workouts.get(i), date));
+            boolean hasExercises = !workouts.get(i).getExercises().isEmpty();
+            boolean rest = !hasExercises && workouts.get(i).getNote().toLowerCase().startsWith("rest");
+            // a DAY with no exercises that is not a rest day is a mistake by the AI, so it changes nothing
+            if (hasExercises || rest) {
+                for (LocalDate date : findDates(headers.get(i), from, end)) {
+                    plan.getDays().removeIf(day -> day.getDate().equals(date));
+                    if (hasExercises) {
+                        plan.getDays().add(copyDay(workouts.get(i), date));
+                    }
                 }
             }
         }
@@ -530,11 +591,14 @@ public class FitnessAgent
         return Double.parseDouble(number);
     }
 
-    // removes the markdown that models sometimes add, like "- ", "* " and "**"
+    // removes the markdown that models sometimes add, like "- ", "* ", "**" and "1. "
     private String cleanLine(String line) {
         line = line.replace("**", "").trim();
         while (line.startsWith("-") || line.startsWith("*") || line.startsWith("#")) {
             line = line.substring(1).trim();
+        }
+        if (line.length() > 2 && Character.isDigit(line.charAt(0)) && (line.charAt(1) == '.' || line.charAt(1) == ')')) {
+            line = line.substring(2).trim(); // a numbered list
         }
         return line;
     }
@@ -605,7 +669,7 @@ public class FitnessAgent
         for (String muscle : STARTER_MUSCLES) {
             for (Exercise exercise : ExerciseLibrary.getInstance().search(muscle, profile.getEquipment())) {
                 if (count < maxExercises && exercise.getMuscles().get(0).equalsIgnoreCase(muscle) && !isAvoided(exercise, profile)) {
-                    exercises += exercise.getName() + " | 3 | " + reps + " | " + startingWeight(exercise) + "\n";
+                    exercises += exercise.getName() + " | 3 | " + reps + " | " + exercise.getStartingWeight() + "\n";
                     count++;
                     break;
                 }
@@ -637,20 +701,52 @@ public class FitnessAgent
         return false;
     }
 
-    // light starting weights for the starter plan. The weight progression raises them after each workout
-    private double startingWeight(Exercise exercise) {
-        switch (exercise.getEquipment()) {
-            case "barbell":
-                return 20; // the empty bar
-            case "dumbbell":
-                return 5;
-            case "kettlebell":
-                return 8;
-            case "machine":
-            case "cable":
-                return 10;
-            default:
-                return 0; // bodyweight, bands and the pull-up bar
+    // library exercises that could replace this one: its own alternatives first, then the other exercises for its main muscle.
+    // When fewer than 3 are found, the search is widened to the exercise's other muscles (UC04 2a)
+    private List<Exercise> findSwapMatches(Exercise exercise, UserProfile profile) {
+        ArrayList<Exercise> matches = new ArrayList<>();
+        ExerciseLibrary library = ExerciseLibrary.getInstance();
+        Exercise fromLibrary = library.findExercise(exercise.getName()); // the library's copy has the alternatives
+        if (fromLibrary == null) {
+            return matches;
         }
+
+        for (Exercise alternative : fromLibrary.getAlternatives()) {
+            addMatch(matches, alternative, fromLibrary, profile);
+        }
+        for (Exercise match : library.search(fromLibrary.getMuscles().get(0), profile.getEquipment())) {
+            addMatch(matches, match, fromLibrary, profile);
+        }
+        if (matches.size() < 3) {
+            for (String muscle : fromLibrary.getMuscles()) {
+                for (Exercise match : library.search(muscle, profile.getEquipment())) {
+                    addMatch(matches, match, fromLibrary, profile);
+                }
+            }
+        }
+        return matches;
+    }
+
+    // adds the match if it is a different exercise that fits the user's equipment and boundaries
+    private void addMatch(List<Exercise> matches, Exercise match, Exercise exercise, UserProfile profile) {
+        boolean hasEquipment = match.getEquipment().equals("none");
+        for (String item : profile.getEquipment()) {
+            if (item.equalsIgnoreCase(match.getEquipment())) {
+                hasEquipment = true;
+            }
+        }
+        if (match != exercise && !matches.contains(match) && hasEquipment && !isAvoided(match, profile)) {
+            matches.add(match);
+        }
+    }
+
+    // true when one of the options is already this exercise, with or without an explanation
+    private boolean hasOption(List<String> options, String name) {
+        for (String option : options) {
+            if (option.equals(name) || option.startsWith(name + ":")) {
+                return true;
+            }
+        }
+        return false;
     }
 }
