@@ -1,5 +1,6 @@
 package fitnesscoach.data;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -70,13 +71,45 @@ public class UserProfile
 	}
 
 
-	public void addBoundary(String boundary)
-	{
-		if (!boundaries.contains(boundary))
-		{
-			boundaries.add(boundary);
-		}
-	}
+    // boundaries from the AI start with a kind, like "goal: build muscle" or "days: monday, friday",
+    // so the matching field is filled in too (F01)
+    public void addBoundary(String boundary) {
+        String lower = boundary.toLowerCase();
+        String value = "";
+        if (boundary.contains(":")) {
+            value = boundary.substring(boundary.indexOf(":") + 1).trim();
+        }
+
+        if (lower.startsWith("goal:")) {
+            goal = value;
+        } else if (lower.startsWith("days:")) {
+            for (String day : value.replace(" and ", ", ").split(",")) { // "monday and friday" works too
+                day = day.trim().toLowerCase();
+                if (isDayName(day) && !availableDays.contains(day)) {
+                    availableDays.add(day);
+                }
+            }
+        } else if (lower.startsWith("minutes:")) {
+            int minutes = firstNumber(value);
+            if (minutes > 0) {
+                minutesPerWorkout = minutes;
+            }
+        } else if (lower.startsWith("equipment:")) {
+            for (String item : value.replace(" and ", ", ").split(",")) {
+                item = item.trim().toLowerCase();
+                if (item.endsWith("s")) {
+                    item = item.substring(0, item.length() - 1); // dumbbells becomes dumbbell
+                }
+                if (!item.isEmpty() && !equipment.contains(item)) {
+                    equipment.add(item);
+                }
+            }
+        }
+
+        if (!boundaries.contains(boundary)) {
+            boundaries.add(boundary);
+        }
+    }
 
 
 	public void addBodyWeight(double weightKg)
@@ -208,4 +241,30 @@ public class UserProfile
 	{
 		return weightHistory;
 	}
+
+
+    private boolean isDayName(String day) {
+        for (DayOfWeek dayOfWeek : DayOfWeek.values()) {
+            if (dayOfWeek.toString().equalsIgnoreCase(day)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // the first whole number in text like "45" or "30-45 minutes", or 0 when there is none
+    private int firstNumber(String text) {
+        String digits = "";
+        for (char c : text.toCharArray()) {
+            if (Character.isDigit(c)) {
+                digits += c;
+            } else if (!digits.isEmpty()) {
+                break;
+            }
+        }
+        if (digits.isEmpty()) {
+            return 0;
+        }
+        return Integer.parseInt(digits);
+    }
 }

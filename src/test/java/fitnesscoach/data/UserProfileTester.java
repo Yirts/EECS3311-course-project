@@ -3,6 +3,7 @@ package fitnesscoach.data;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.time.LocalDate;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
@@ -286,6 +287,81 @@ class UserProfileTester
 
 		assertEquals(1200, profile.calculateTargets().get("calories"), "Failed Test 9 calculateTargets");
 	}
+
+
+    // ----- addBoundary() fills in the matching field (F01) -----
+
+    @Test
+    void addBoundaryWithAGoalSetsTheGoal() {
+        UserProfile profile = new UserProfile(25, 180, 80, "beginner");
+
+        profile.addBoundary("goal: build muscle");
+
+        assertEquals("build muscle", profile.getGoal());
+    }
+
+    @Test
+    void addBoundaryWithDaysAddsOnlyRealDayNames() {
+        UserProfile profile = new UserProfile(25, 180, 80, "beginner");
+
+        profile.addBoundary("days: Monday, wednesday, someday");
+
+        assertEquals(List.of("monday", "wednesday"), profile.getAvailableDays());
+    }
+
+    @Test
+    void addBoundaryWithDaysReadsAnd() {
+        UserProfile profile = new UserProfile(25, 180, 80, "beginner");
+
+        profile.addBoundary("days: monday and friday");
+
+        assertEquals(List.of("monday", "friday"), profile.getAvailableDays());
+    }
+
+    @Test
+    void addBoundaryWithMinutesSetsTheWorkoutLength() {
+        UserProfile profile = new UserProfile(25, 180, 80, "beginner");
+
+        profile.addBoundary("minutes: 45");
+
+        assertEquals(45, profile.getMinutesPerWorkout());
+    }
+
+    @Test
+    void addBoundaryWithAMinutesRangeUsesTheFirstNumber() {
+        UserProfile profile = new UserProfile(25, 180, 80, "beginner");
+
+        profile.addBoundary("minutes: 30-45 minutes");
+
+        assertEquals(30, profile.getMinutesPerWorkout());
+    }
+
+    @Test
+    void addBoundaryWithEquipmentAddsEachItemWithoutPlurals() {
+        UserProfile profile = new UserProfile(25, 180, 80, "beginner");
+
+        profile.addBoundary("equipment: Dumbbells, pull-up bar");
+
+        assertEquals(List.of("dumbbell", "pull-up bar"), profile.getEquipment());
+    }
+
+    @Test
+    void addBoundaryKeepsTheBoundaryText() {
+        UserProfile profile = new UserProfile(25, 180, 80, "beginner");
+
+        profile.addBoundary("goal: build muscle");
+
+        assertEquals(List.of("goal: build muscle"), profile.getBoundaries());
+    }
+
+    @Test
+    void addBoundaryWithANoteDoesNotChangeTheOtherFields() {
+        UserProfile profile = new UserProfile(25, 180, 80, "beginner");
+
+        profile.addBoundary("note: likes to work out in the morning");
+
+        assertEquals("", profile.getGoal());
+    }
 
 
 	private UserProfile makeProfile(int age, double heightCm, double weightKg, String goal, int daysPerWeek)

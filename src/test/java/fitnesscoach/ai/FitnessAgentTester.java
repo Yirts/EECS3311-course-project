@@ -2,14 +2,21 @@ package fitnesscoach.ai;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import fitnesscoach.data.UserProfile;
 import fitnesscoach.history.SetLog;
 import fitnesscoach.history.WorkoutHistory;
 import fitnesscoach.history.WorkoutLog;
+import fitnesscoach.plan.ExerciseLibrary;
+import fitnesscoach.plan.PlannedExercise;
+import fitnesscoach.plan.WorkoutDay;
+import fitnesscoach.plan.WorkoutPlan;
 
 class FitnessAgentTester
 {
@@ -199,6 +206,279 @@ class FitnessAgentTester
 
 		assertEquals("the user trains at home", agent.getMemory().get(0), "Failed Test 1 setMemory");
 	}
+
+
+    // ----- F01: readBoundaries() -----
+
+    @Test
+    void readBoundariesKeepsOnlyTheBoundaryLines() {
+        FakeModel claude = new FakeModel("Here are the boundaries:\n- goal: build muscle\n**avoid: quads**\nGood luck!");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        List<String> boundaries = agent.readBoundaries(newProfile(), "I want to build muscle but my knee hurts");
+
+        assertEquals(List.of("goal: build muscle", "avoid: quads"), boundaries);
+    }
+
+    @Test
+    void readBoundariesSplitsAnAvoidListIntoOneBoundaryEach() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel("avoid: knees, quads"), null, new WorkoutHistory());
+
+        List<String> boundaries = agent.readBoundaries(newProfile(), "my knee hurts");
+
+        assertEquals(List.of("avoid: knees", "avoid: quads"), boundaries);
+    }
+
+    @Test
+    void readBoundariesSendsTheNotesToTheAi() {
+        FakeModel claude = new FakeModel("equipment: dumbbell");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        agent.readBoundaries(newProfile(), "I only have dumbbells");
+
+        assertTrue(claude.prompts.get(0).contains("I only have dumbbells"));
+    }
+
+    @Test
+    void readBoundariesKeepsFollowUpQuestions() {
+        FakeModel claude = new FakeModel("question: How bad is your knee injury?");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        List<String> boundaries = agent.readBoundaries(newProfile(), "my knee hurts");
+
+        assertEquals(List.of("question: How bad is your knee injury?"), boundaries);
+    }
+
+    @Test
+    void readBoundariesReturnsNullWhenNoModelCanBeReached() {
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        assertNull(agent.readBoundaries(newProfile(), "my knee hurts"));
+    }
+
+    // ----- F02: buildPlan() -----
+
+    @Test
+    void buildPlanRepeatsTheWeekForEveryWeek() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(MONDAY_PUSH_UPS), null, new WorkoutHistory());
+
+        WorkoutPlan plan = agent.buildPlan(newProfile(), 4);
+
+        assertEquals(4, plan.getDays().size());
+    }
+
+    @Test
+    void buildPlanPutsEachWorkoutOnItsDay() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(MONDAY_PUSH_UPS), null, new WorkoutHistory());
+
+        WorkoutPlan plan = agent.buildPlan(newProfile(), 4);
+
+        for (WorkoutDay day : plan.getDays()) {
+            assertEquals(DayOfWeek.MONDAY, day.getDate().getDayOfWeek());
+        }
+    }
+
+    @Test
+    void buildPlanReadsTheSetsRepsAndWeight() {
+        FakeModel claude = new FakeModel("DAY monday: Upper body\nDumbbell Bench Press | 4 | 8 | 12.5");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        PlannedExercise first = agent.buildPlan(newProfile(), 1).getDays().get(0).getExercises().get(0);
+
+        assertEquals("Dumbbell Bench Press", first.getExercise().getName());
+        assertEquals(4, first.getSets());
+        assertEquals(8, first.getReps());
+        assertEquals(12.5, first.getWeightKg());
+    }
+
+    @Test
+    void buildPlanUsesTheFirstNumberOfARepRange() {
+        FakeModel claude = new FakeModel("DAY monday: Upper body\nPush Up | 3 | 8-12 | 0");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        PlannedExercise first = agent.buildPlan(newProfile(), 1).getDays().get(0).getExercises().get(0);
+
+        assertEquals(8, first.getReps());
+    }
+
+    @Test
+    void buildPlanSkipsExercisesThatAreNotInTheLibrary() {
+        FakeModel claude = new FakeModel("DAY monday: Upper body\nFlying Kick | 3 | 10 | 0\nPush Up | 3 | 10 | 0");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutPlan plan = agent.buildPlan(newProfile(), 1);
+
+        assertEquals(1, plan.getDays().get(0).getExercises().size());
+    }
+
+    @Test
+    void buildPlanReadsAMarkdownTableRow() {
+        FakeModel claude = new FakeModel("**DAY monday: Upper body**\n| Push Up | 3 | 10 | 0 |");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutPlan plan = agent.buildPlan(newProfile(), 1);
+
+        assertEquals(1, plan.getDays().get(0).getExercises().size());
+    }
+
+    @Test
+    void buildPlanGivesEachDayItsOwnExercises() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(MONDAY_PUSH_UPS), null, new WorkoutHistory());
+        WorkoutPlan plan = agent.buildPlan(newProfile(), 2);
+
+        plan.getDays().get(0).getExercises().get(0).setWeightKg(5);
+
+        assertEquals(0, plan.getDays().get(1).getExercises().get(0).getWeightKg());
+    }
+
+    @Test
+    void buildPlanUsesAStarterWeekWhenNoModelCanBeReached() {
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutPlan plan = agent.buildPlan(newProfile(), 4);
+
+        assertEquals(12, plan.getDays().size()); // monday, wednesday and friday for 4 weeks
+    }
+
+    @Test
+    void buildPlanUsesAStarterWeekWhenTheAnswerHasNoWorkouts() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel("Sorry, I can not make a plan."), null, new WorkoutHistory());
+
+        WorkoutPlan plan = agent.buildPlan(newProfile(), 4);
+
+        assertEquals(12, plan.getDays().size());
+    }
+
+    @Test
+    void starterWeekPassesTheSafetyCheck() {
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+        UserProfile profile = newProfile();
+        profile.addBoundary("days: tuesday, thursday");
+        profile.addBoundary("minutes: 30");
+        profile.addBoundary("equipment: dumbbell");
+        profile.addBoundary("avoid: quads");
+
+        WorkoutPlan plan = agent.buildPlan(profile, 2);
+
+        assertTrue(plan.checkSafety(profile).isEmpty());
+    }
+
+    // ----- F02 and F03: changePlan() -----
+
+    @Test
+    void changePlanSendsTheCurrentPlanToTheAi() {
+        WorkoutPlan plan = mondayPlan(1);
+        FakeModel claude = new FakeModel("DAY monday: Legs\nGlute Bridge | 3 | 12 | 0");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        agent.changePlan(plan, newProfile(), "legs instead");
+
+        assertTrue(claude.prompts.get(0).contains("Push Up | 3 | 10 | 0.0"));
+    }
+
+    @Test
+    void changePlanChangesOnlyTheDateItIsGiven() {
+        WorkoutPlan plan = mondayPlan(2);
+        LocalDate secondMonday = plan.getDays().get(1).getDate();
+        FakeModel claude = new FakeModel("DAY " + secondMonday + ": Legs\nGlute Bridge | 3 | 12 | 0");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutPlan changed = agent.changePlan(plan, newProfile(), "legs next monday");
+
+        assertEquals("Push Up", firstExerciseName(changed.getDays().get(0)));
+        assertEquals("Glute Bridge", firstExerciseName(changed.getDays().get(1)));
+    }
+
+    @Test
+    void changePlanWithADayNameChangesEveryMatchingDay() {
+        WorkoutPlan plan = mondayPlan(3);
+        FakeModel claude = new FakeModel("DAY monday: Legs\nGlute Bridge | 3 | 12 | 0");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutPlan changed = agent.changePlan(plan, newProfile(), "legs on mondays");
+
+        for (WorkoutDay day : changed.getDays()) {
+            assertEquals("Glute Bridge", firstExerciseName(day));
+        }
+    }
+
+    @Test
+    void changePlanCanAddWorkoutsOnANewDay() {
+        WorkoutPlan plan = mondayPlan(2);
+        FakeModel claude = new FakeModel("DAY wednesday: Core\nPlank | 3 | 30 | 0");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutPlan changed = agent.changePlan(plan, newProfile(), "add a core day on wednesdays");
+
+        assertEquals(4, changed.getDays().size());
+    }
+
+    @Test
+    void changePlanWithAnEmptyDayRemovesThatWorkout() {
+        WorkoutPlan plan = mondayPlan(2);
+        LocalDate firstMonday = plan.getDays().get(0).getDate();
+        FitnessAgent agent = new FitnessAgent(new FakeModel("DAY " + firstMonday + ": Rest"), null, new WorkoutHistory());
+
+        WorkoutPlan changed = agent.changePlan(plan, newProfile(), "I am away on monday");
+
+        assertEquals(1, changed.getDays().size());
+    }
+
+    @Test
+    void changePlanDoesNotChangeTheOldPlan() {
+        WorkoutPlan plan = mondayPlan(2);
+        FakeModel claude = new FakeModel("DAY monday: Legs\nGlute Bridge | 3 | 12 | 0");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        agent.changePlan(plan, newProfile(), "legs on mondays");
+
+        assertEquals("Push Up", firstExerciseName(plan.getDays().get(0)));
+    }
+
+    @Test
+    void changePlanNeverChangesDaysThatAlreadyHappened() {
+        WorkoutPlan plan = new WorkoutPlan(LocalDate.now().minusWeeks(2));
+        WorkoutDay lastWeek = new WorkoutDay(LocalDate.now().minusDays(7), "Upper body");
+        lastWeek.getExercises().add(new PlannedExercise(ExerciseLibrary.getInstance().findExercise("Push Up"), 3, 10, 0));
+        plan.getDays().add(lastWeek);
+        FakeModel claude = new FakeModel("DAY " + lastWeek.getDate() + ": Legs\nGlute Bridge | 3 | 12 | 0");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutPlan changed = agent.changePlan(plan, newProfile(), "legs last week");
+
+        assertEquals("Push Up", firstExerciseName(changed.getDays().get(0)));
+    }
+
+    @Test
+    void changePlanReturnsNullWhenNoModelCanBeReached() {
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        assertNull(agent.changePlan(mondayPlan(1), newProfile(), "legs instead"));
+    }
+
+    private static final String MONDAY_PUSH_UPS = "DAY monday: Upper body\nPush Up | 3 | 10 | 0";
+
+    private UserProfile newProfile() {
+        return new UserProfile(25, 180, 80, "beginner");
+    }
+
+    // a plan with push ups on mondays, made by an agent with its own fake model
+    private WorkoutPlan mondayPlan(int weeks) {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(MONDAY_PUSH_UPS), null, new WorkoutHistory());
+        return agent.buildPlan(newProfile(), weeks);
+    }
+
+    private String firstExerciseName(WorkoutDay day) {
+        return day.getExercises().get(0).getExercise().getName();
+    }
 }
 
 class FakeModel implements AIModel

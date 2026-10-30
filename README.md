@@ -15,6 +15,15 @@ A Java desktop app with a JavaFX GUI and a command-line interface (CLI). An AI a
 2. **GUI:** right-click `src/main/java/fitnesscoach/ui/CommandLineApp.java` > **Run As > Java Application**.
 3. **CLI:** open **Run > Run Configurations > CommandLineApp > Arguments**, type a command such as `help` under **Program arguments**, and press **Run**.
 
+## CLI commands
+
+| Command | What it does |
+|---|---|
+| `help` | Lists the commands |
+| `profile setup` | Asks for your age, height, weight, experience and notes (injuries, goal, equipment, free days, workout length). The AI turns the notes into boundaries, and you confirm them (F01) |
+| `plan generate --weeks 8` | The AI builds a plan of 1 to 12 weeks (4 if no number is given) that passes the safety check. You accept it, regenerate it or cancel (F02) |
+| `plan show` | Shows your saved plan |
+
 ## Run it with Maven
 
 ```
@@ -26,5 +35,7 @@ mvn javafx:run
 The AI features need an Anthropic API key. Copy `.env.example` to `.env` and replace the placeholder with your own key. `.env` is listed in `.gitignore`, so it is never committed.
 
 `CLAUDE_MODEL` in `.env` picks the Claude model (`claude-sonnet-5` by default). When `.env` has a key, two of the tests make one small real call to Claude. Without a key they are skipped.
+
+When Claude can't be reached, the app uses the local Llama model instead. For that, install [Ollama](https://ollama.com) and run `ollama pull llama3.2`. If neither model is available, plan generation still works with a simple starter plan.
 
 The app saves its data (profile, plan, workout history, coach memory and reports) in the `data` folder, which is not committed.
