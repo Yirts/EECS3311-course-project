@@ -4,11 +4,17 @@ import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
 import fitnesscoach.controller.FitnessAppFacade;
 import fitnesscoach.data.UserProfile;
+import fitnesscoach.history.CheckIn;
+import fitnesscoach.history.SetLog;
+import fitnesscoach.history.WorkoutLog;
+import fitnesscoach.plan.ExerciseLibrary;
 import fitnesscoach.plan.PlannedExercise;
 import fitnesscoach.plan.WorkoutDay;
 import fitnesscoach.plan.WorkoutPlan;
@@ -58,6 +64,18 @@ public class CommandLineApp
             undoChange();
         } else if (command.startsWith("exercise swap")) {
             swapExercise(command.substring("exercise swap".length()));
+        } else if (command.startsWith("checkin")) {
+            checkIn(command);
+        } else if (command.equals("workout start")) {
+            startWorkout();
+        } else if (command.startsWith("workout log")) {
+            logSet(command);
+        } else if (command.equals("workout skip")) {
+            skipExercise();
+        } else if (command.equals("workout finish")) {
+            finishWorkout();
+        } else if (command.equals("plan progress")) {
+            showProgression();
         } else {
             System.out.println("Unknown command: " + command);
             System.out.println("Type \"fitagent help\" to see the commands.");
@@ -76,10 +94,16 @@ public class CommandLineApp
         printCommand("plan change \"only 30 minutes on tuesday\"", "ask the AI to change your plan");
         printCommand("plan undo", "go back to your plan from before the last change");
         printCommand("exercise swap \"Barbell Squat\" --reason pain", "swap an exercise for one of 3 options");
+        printCommand("checkin --sleep 6 --energy 2 --stress 3", "daily check-in (also --soreness and --comments)");
+        printCommand("workout start", "start today's workout");
+        printCommand("workout log --reps 8 --weight 60 --difficulty 8", "log a set (--exercise \"Name\" for another exercise)");
+        printCommand("workout skip", "skip the current exercise");
+        printCommand("workout finish", "finish the workout and see your next weights");
+        printCommand("plan progress", "see your next weights and change one");
     }
 
     private void printCommand(String command, String meaning) {
-        System.out.println(String.format("  %-46s %s", command, meaning));
+        System.out.println(String.format("  %-50s %s", command, meaning));
     }
 
     // F01: fitagent profile setup
@@ -370,6 +394,349 @@ public class CommandLineApp
         if (app.getProfile().getBoundaries().contains("avoid: " + oldName)) {
             System.out.println("Because of the pain, your profile now avoids " + oldName + ", so future plans skip it.");
         }
+    }
+
+    // F07: fitagent checkin --sleep 6 --energy 2 --stress 3. Anything left out is asked for
+    private void checkIn(String command) {
+        CheckIn checkIn;
+        try {
+            double sleepHours = readNumberFlag(command, "--sleep", "Hours of sleep last night: ");
+            int energy = (int) readNumberFlag(command, "--energy", "Energy, from 1 (none) to 5 (lots): ");
+            int stress = (int) readNumberFlag(command, "--stress", "Stress, from 1 (none) to 5 (lots): ");
+            int soreness = (int) readNumberFlag(command, "--soreness", "Soreness, from 1 (none) to 5 (lots): ");
+            String comments = readFlag(command, "--comments");
+            if (comments == null) {
+                System.out.print("Anything else about how you feel? (press Enter to skip): ");
+                comments = input.nextLine().trim();
+            }
+            checkIn = new CheckIn(LocalDate.now(), sleepHours, energy, stress, soreness, comments);
+        } catch (IllegalArgumentException error) {
+            System.out.println(error.getMessage() + ". The check-in was not saved.");
+            return;
+        }
+
+        WorkoutDay before = null;
+        if (app.getCurrentPlan() != null) {
+            before = app.getCurrentPlan().getTodaysWorkout();
+        }
+        System.out.println("Your check-in score is " + checkIn.calculateScore() + " out of 100. Checking today's workout...");
+        WorkoutDay today;
+        try {
+            today = app.submitDailyCheckIn(checkIn);
+        } catch (RuntimeException error) {
+            System.out.println(error.getMessage());
+            return;
+        }
+
+        if (today == null) {
+            System.out.println("No workout is planned today, but your check-in is saved.");
+        } else if (today == before) {
+            System.out.println("That is a normal day, so today's workout stays the same.");
+        } else {
+            System.out.println("Today's workout was changed:");
+            System.out.print(describeDay(today));
+            System.out.print("Accept or reject the change? (a/r): ");
+            if (input.nextLine().trim().toLowerCase().startsWith("r")) {
+                app.undoChange();
+                System.out.println("OK, you will do the normal workout.");
+            } else {
+                System.out.println("The changed workout is saved.");
+            }
+        }
+    }
+
+    // F05: fitagent workout start. The daily check-in comes first, unless the user skips it
+    private void startWorkout() {
+        if (app.getCurrentLog() == null) {
+            System.out.print("Do your daily check-in first? (y/n): ");
+            if (input.nextLine().trim().toLowerCase().startsWith("y")) {
+                checkIn("checkin");
+            }
+        }
+
+        WorkoutDay day = app.startWorkout();
+        WorkoutLog log = app.getCurrentLog();
+        if (log.getDate().isBefore(LocalDate.now())) {
+            System.out.println("You still have a workout from " + log.getDate() + ". Finish it first with: fitagent workout finish");
+            return;
+        }
+        if (day == null) {
+            System.out.println("There are no more workouts in your plan, so this is a free workout. Log each set with --exercise, for example:");
+            System.out.println("fitagent workout log --exercise \"Push Up\" --reps 10 --weight 0 --difficulty 6");
+            return;
+        }
+
+        if (!log.getSets().isEmpty()) {
+            System.out.println("Going on with your workout (" + log.getSets().size() + " sets logged so far):");
+        } else if (!day.getDate().equals(LocalDate.now())) {
+            System.out.println("No workout is planned today, so your next workout starts early:"); // UC05 3a
+        } else {
+            System.out.println("Today's workout:");
+        }
+        System.out.print(describeDay(day));
+        showNextSet(day, log);
+    }
+
+    // F05: fitagent workout log --reps 8 --weight 60 --difficulty 8 (--exercise "Name" for another exercise)
+    private void logSet(String command) {
+        WorkoutLog log = app.getCurrentLog();
+        if (log == null) {
+            System.out.println("Start a workout first with: fitagent workout start");
+            return;
+        }
+
+        String name = readFlag(command, "--exercise");
+        if (name == null) {
+            PlannedExercise current = null;
+            if (log.getDay() != null) {
+                current = findCurrentExercise(log.getDay(), log);
+            }
+            if (current == null) {
+                System.out.println("Say which exercise the set was for, for example: --exercise \"Push Up\"");
+                return;
+            }
+            name = current.getExercise().getName();
+        } else if (ExerciseLibrary.getInstance().findExercise(name) != null) {
+            name = ExerciseLibrary.getInstance().findExercise(name).getName(); // the library's spelling
+        }
+
+        SetLog set;
+        try {
+            int reps = (int) readNumberFlag(command, "--reps", "Reps: ");
+            double weightKg = readNumberFlag(command, "--weight", "Weight in kg (0 for bodyweight): ");
+            int difficulty = (int) readNumberFlag(command, "--difficulty", "Difficulty, from 1 (easy) to 10 (as hard as possible): ");
+            set = new SetLog(name, reps, weightKg, difficulty);
+        } catch (IllegalArgumentException error) {
+            System.out.println(error.getMessage() + ". The set was not logged."); // UC05 4a
+            return;
+        }
+
+        app.logSet(set);
+        System.out.println("Logged " + name + ": " + set.getReps() + " reps at " + set.getWeightKg() + " kg. Rest about 90 seconds.");
+        if (log.getDay() != null) {
+            showNextSet(log.getDay(), log);
+        }
+    }
+
+    // F05: fitagent workout skip
+    private void skipExercise() {
+        WorkoutLog log = app.getCurrentLog();
+        if (log == null || log.getDay() == null) {
+            System.out.println("There is no planned workout going on.");
+            return;
+        }
+        PlannedExercise current = findCurrentExercise(log.getDay(), log);
+        if (current == null) {
+            System.out.println("Every exercise is done. Finish with: fitagent workout finish");
+            return;
+        }
+
+        app.skipExercise(current);
+        System.out.println("Skipped " + current.getExercise().getName() + ". It does not count as a failed attempt.");
+        showNextSet(log.getDay(), log);
+    }
+
+    // F05 and F06: fitagent workout finish
+    private void finishWorkout() {
+        if (app.getCurrentLog() == null) {
+            System.out.println("There is no workout to finish. Start one with: fitagent workout start");
+            return;
+        }
+
+        System.out.println("Saving your workout and working out your next weights...");
+        WorkoutLog log;
+        try {
+            log = app.finishWorkout();
+        } catch (RuntimeException error) {
+            System.out.println(error.getMessage());
+            return;
+        }
+
+        System.out.println();
+        System.out.println("Workout done: " + log.getSets().size() + " sets, " + log.getWeightLifted() + " kg lifted in total.");
+        ArrayList<String> names = new ArrayList<>();
+        for (SetLog set : log.getSets()) {
+            if (!names.contains(set.getExerciseName())) {
+                names.add(set.getExerciseName());
+            }
+        }
+        for (String name : names) {
+            showRecord(name, log);
+        }
+
+        if (log.getDay() != null && app.getCurrentPlan() != null) {
+            System.out.println();
+            System.out.println("Your next weights:");
+            if (showNextWeights(log.getDay().getDate().plusDays(1)).isEmpty()) {
+                System.out.println("  (no more workouts in your plan)");
+            }
+            System.out.println("To change one, run: fitagent plan progress");
+        }
+    }
+
+    // F06: fitagent plan progress. Shows the next weight of each exercise, and the user can change one
+    private void showProgression() {
+        if (app.getCurrentPlan() == null) {
+            System.out.println("You don't have a plan yet. Run \"fitagent plan generate --weeks 8\" first.");
+            return;
+        }
+
+        System.out.println("Your weights for the next workouts:");
+        ArrayList<PlannedExercise> upcoming = showNextWeights(LocalDate.now().plusDays(1));
+        if (upcoming.isEmpty()) {
+            System.out.println("  (no workouts planned after today)");
+            return;
+        }
+
+        System.out.print("Type a number to change that weight, or press Enter to accept them: ");
+        int pick = 0;
+        try {
+            pick = Integer.parseInt(input.nextLine().trim());
+        } catch (NumberFormatException error) {
+            pick = 0;
+        }
+        if (pick < 1 || pick > upcoming.size()) {
+            System.out.println("The weights stay as they are.");
+            return;
+        }
+
+        PlannedExercise chosen = upcoming.get(pick - 1);
+        double weightKg = askNumber("New weight in kg for " + chosen.getExercise().getName() + ": ");
+        try {
+            app.overrideWeight(chosen, weightKg); // UC06 6a
+            System.out.println("Saved. " + chosen.getExercise().getName() + " is now " + weightKg + " kg from then on, and the coach will remember it.");
+        } catch (IllegalArgumentException error) {
+            System.out.println(error.getMessage());
+        }
+    }
+
+    // F06: prints the next planned copy of each exercise from the date on, next to the last weight lifted, and returns them
+    private ArrayList<PlannedExercise> showNextWeights(LocalDate from) {
+        ArrayList<PlannedExercise> upcoming = new ArrayList<>();
+        ArrayList<String> names = new ArrayList<>();
+        for (WorkoutDay day : app.getCurrentPlan().getDays()) {
+            if (!day.getDate().isBefore(from)) {
+                for (PlannedExercise planned : day.getExercises()) {
+                    String name = planned.getExercise().getName();
+                    if (!names.contains(name)) {
+                        names.add(name);
+                        upcoming.add(planned);
+                        System.out.println("  " + upcoming.size() + ". " + name + ": " + describeWeight(planned));
+                    }
+                }
+            }
+        }
+        return upcoming;
+    }
+
+    // like "22.5 kg, up from 20.0 kg last time (not heavier for 2 workouts)"
+    private String describeWeight(PlannedExercise planned) {
+        if (planned.getWeightKg() == 0) {
+            return "bodyweight";
+        }
+        String text = planned.getWeightKg() + " kg";
+        TreeMap<LocalDate, Double> progress = new TreeMap<>(app.getProgress(planned.getExercise().getName()));
+        if (!progress.isEmpty()) {
+            double last = progress.lastEntry().getValue();
+            if (planned.getWeightKg() > last) {
+                text += ", up from " + last + " kg last time";
+            } else if (planned.getWeightKg() < last) {
+                text += ", down from " + last + " kg last time";
+            } else {
+                text += ", the same as last time";
+            }
+        }
+        if (planned.getStuckCount() > 0) {
+            text += " (not heavier for " + planned.getStuckCount() + " workouts)";
+        }
+        if (planned.getNote() != null && !planned.getNote().isEmpty()) {
+            text += " (" + planned.getNote() + ")";
+        }
+        return text;
+    }
+
+    // UC05 8: says when this workout beat the heaviest weight from an earlier day
+    private void showRecord(String exerciseName, WorkoutLog log) {
+        double best = 0;
+        for (SetLog set : log.getSets()) {
+            if (set.getExerciseName().equals(exerciseName) && set.getWeightKg() > best) {
+                best = set.getWeightKg();
+            }
+        }
+
+        double earlierBest = -1;
+        for (Map.Entry<LocalDate, Double> entry : app.getProgress(exerciseName).entrySet()) {
+            if (entry.getKey().isBefore(log.getDate()) && entry.getValue() > earlierBest) {
+                earlierBest = entry.getValue();
+            }
+        }
+        if (earlierBest >= 0 && best > earlierBest) {
+            System.out.println("New record: " + exerciseName + " at " + best + " kg (your best was " + earlierBest + " kg).");
+        }
+    }
+
+    // shows the next set to do: the first exercise that still has sets left and was not skipped
+    private void showNextSet(WorkoutDay day, WorkoutLog log) {
+        PlannedExercise next = findCurrentExercise(day, log);
+        if (next == null) {
+            System.out.println("Every exercise is done. Finish with: fitagent workout finish");
+            return;
+        }
+
+        String weight = "";
+        if (next.getWeightKg() > 0) {
+            weight = " at " + next.getWeightKg() + " kg";
+        }
+        int done = countSets(log, next.getExercise().getName());
+        System.out.println("Next: " + next.getExercise().getName() + ", set " + (done + 1) + " of " + next.getSets()
+                + ", " + next.getReps() + " reps" + weight + ".");
+        System.out.println("Log it with: fitagent workout log --reps <reps> --weight <kg> --difficulty <1-10>");
+    }
+
+    private PlannedExercise findCurrentExercise(WorkoutDay day, WorkoutLog log) {
+        for (PlannedExercise planned : day.getExercises()) {
+            boolean skipped = "skipped".equals(planned.getNote());
+            if (!skipped && countSets(log, planned.getExercise().getName()) < planned.getSets()) {
+                return planned;
+            }
+        }
+        return null;
+    }
+
+    private int countSets(WorkoutLog log, String exerciseName) {
+        int count = 0;
+        for (SetLog set : log.getSets()) {
+            if (set.getExerciseName().equalsIgnoreCase(exerciseName)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // the text after a flag like --reps, up to the next flag, or null when the flag is not there
+    private String readFlag(String command, String flag) {
+        int start = command.indexOf(flag);
+        if (start == -1) {
+            return null;
+        }
+        String value = command.substring(start + flag.length());
+        if (value.contains(" --")) {
+            value = value.substring(0, value.indexOf(" --"));
+        }
+        return value.replace("\"", "").trim();
+    }
+
+    // a number from a flag, or asked for when the flag is left out or is not a number
+    private double readNumberFlag(String command, String flag, String question) {
+        String value = readFlag(command, flag);
+        if (value != null) {
+            try {
+                return Double.parseDouble(value);
+            } catch (NumberFormatException error) {
+                System.out.println(flag + " must be a number.");
+            }
+        }
+        return askNumber(question);
     }
 
     // prints the days that are different in the new plan, and returns how many there are

@@ -30,4 +30,30 @@ class WorkoutDayTester
 
 		assertEquals(planned, day.getExercises().get(0), "Failed Test 2 getExercises");
 	}
+
+
+    // ----- copy() -----
+
+    @Test
+    void copyKeepsTheStuckCount() {
+        WorkoutDay day = new WorkoutDay(LocalDate.now(), "Upper body");
+        PlannedExercise planned = new PlannedExercise(new Exercise("Bench Press", new ArrayList<>(), "barbell"), 3, 10, 40);
+        planned.setStuckCount(2);
+        day.getExercises().add(planned);
+
+        WorkoutDay copy = day.copy(LocalDate.now().plusWeeks(1));
+
+        assertEquals(2, copy.getExercises().get(0).getStuckCount());
+    }
+
+    @Test
+    void copyHasItsOwnExercises() {
+        WorkoutDay day = new WorkoutDay(LocalDate.now(), "Upper body");
+        PlannedExercise planned = new PlannedExercise(new Exercise("Bench Press", new ArrayList<>(), "barbell"), 3, 10, 40);
+        day.getExercises().add(planned);
+
+        day.copy(LocalDate.now().plusWeeks(1)).getExercises().get(0).setSets(5);
+
+        assertEquals(3, planned.getSets());
+    }
 }

@@ -4,6 +4,10 @@ import java.time.LocalDate;
 
 public class CheckIn
 {
+    // a normal day scores from 55 to 85. Outside that range the AI changes today's workout (F07)
+    public static final int LOW_SCORE = 55;
+    public static final int HIGH_SCORE = 85;
+
 	private LocalDate date;
 	private double sleepHours;
 	private int energy;

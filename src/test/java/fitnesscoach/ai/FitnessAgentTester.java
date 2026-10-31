@@ -10,6 +10,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import fitnesscoach.data.UserProfile;
+import fitnesscoach.history.CheckIn;
 import fitnesscoach.history.SetLog;
 import fitnesscoach.history.WorkoutHistory;
 import fitnesscoach.history.WorkoutLog;
@@ -207,6 +208,17 @@ class FitnessAgentTester
 		assertEquals("the user trains at home", agent.getMemory().get(0), "Failed Test 1 setMemory");
 	}
 
+
+    @Test
+    void answerQuestionReadsAToolRequestWithAColon() {
+        // Claude Haiku once wrote "TOOL: history: 14" instead of "TOOL history: 14"
+        FakeModel claude = new FakeModel("TOOL: history: 14", "You did great.");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        agent.answerQuestion("How did my workouts go?");
+
+        assertTrue(claude.prompts.get(1).contains("Workouts in the last 14 days"));
+    }
 
     // ----- F01: readBoundaries() -----
 
@@ -568,7 +580,206 @@ class FitnessAgentTester
         assertTrue(claude.prompts.isEmpty());
     }
 
+    // ----- F07: adjustIntensity() -----
+
+    @Test
+    void adjustIntensityUsesTheAisEasierWorkout() {
+        FakeModel claude = new FakeModel("DAY " + LocalDate.now() + ": Back, lighter (you slept badly)\nDumbbell Row | 2 | 10 | 20");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutDay adjusted = agent.adjustIntensity(todaysRows(), lowCheckIn(""));
+
+        assertEquals(2, adjusted.getExercises().get(0).getSets());
+    }
+
+    @Test
+    void adjustIntensityPutsTheReasonInTheWorkoutName() {
+        FakeModel claude = new FakeModel("DAY " + LocalDate.now() + ": Back, lighter (you slept badly)\nDumbbell Row | 2 | 10 | 20");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutDay adjusted = agent.adjustIntensity(todaysRows(), lowCheckIn(""));
+
+        assertTrue(adjusted.getNote().contains("you slept badly"));
+    }
+
+    @Test
+    void adjustIntensityKeepsTheWeights() {
+        FakeModel claude = new FakeModel("DAY " + LocalDate.now() + ": Back, harder\nDumbbell Row | 4 | 10 | 30");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutDay adjusted = agent.adjustIntensity(todaysRows(), highCheckIn());
+
+        assertEquals(20.0, adjusted.getExercises().get(0).getWeightKg());
+    }
+
+    @Test
+    void adjustIntensityKeepsTheStuckCount() {
+        FakeModel claude = new FakeModel("DAY " + LocalDate.now() + ": Back, lighter\nDumbbell Row | 2 | 10 | 20");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+        WorkoutDay day = todaysRows();
+        day.getExercises().get(0).setStuckCount(2);
+
+        WorkoutDay adjusted = agent.adjustIntensity(day, lowCheckIn(""));
+
+        assertEquals(2, adjusted.getExercises().get(0).getStuckCount());
+    }
+
+    @Test
+    void adjustIntensityDoesNotChangeTheOriginalDay() {
+        FakeModel claude = new FakeModel("DAY " + LocalDate.now() + ": Back, lighter\nDumbbell Row | 2 | 10 | 20");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+        WorkoutDay day = todaysRows();
+
+        agent.adjustIntensity(day, lowCheckIn(""));
+
+        assertEquals(3, day.getExercises().get(0).getSets());
+    }
+
+    @Test
+    void adjustIntensitySendsTheCheckInToTheAi() {
+        FakeModel claude = new FakeModel("DAY " + LocalDate.now() + ": Back, lighter\nDumbbell Row | 2 | 10 | 20");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        agent.adjustIntensity(todaysRows(), lowCheckIn("my legs feel heavy"));
+
+        assertTrue(claude.prompts.get(0).contains("5.0 hours of sleep"));
+        assertTrue(claude.prompts.get(0).contains("a score of 34"));
+        assertTrue(claude.prompts.get(0).contains("my legs feel heavy"));
+    }
+
+    @Test
+    void adjustIntensityWithSeriousCommentsRecommendsADoctorWithoutTheAi() {
+        FakeModel claude = new FakeModel(); // no replies, so asking the AI would fail the test
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutDay adjusted = agent.adjustIntensity(todaysRows(), lowCheckIn("I had chest pain last night"));
+
+        assertTrue(adjusted.getNote().contains("doctor"));
+    }
+
+    @Test
+    void adjustIntensityWithSeriousCommentsMakesTheWorkoutLighter() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(), null, new WorkoutHistory());
+
+        WorkoutDay adjusted = agent.adjustIntensity(todaysRows(), highCheckIn("I felt dizzy this morning"));
+
+        assertEquals(2, adjusted.getExercises().get(0).getSets());
+    }
+
+    @Test
+    void adjustIntensityWithoutAiRemovesAThirdOfTheSetsOnALowScore() {
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutDay adjusted = agent.adjustIntensity(todaysRows(), lowCheckIn(""));
+
+        assertEquals(2, adjusted.getExercises().get(0).getSets());
+    }
+
+    @Test
+    void adjustIntensityWithoutAiNeverMakesTheWorkoutHarder() {
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        WorkoutDay adjusted = agent.adjustIntensity(todaysRows(), highCheckIn());
+
+        assertEquals(3, adjusted.getExercises().get(0).getSets());
+    }
+
+    // ----- F06: analyzeStuckExercise() -----
+
+    @Test
+    void analyzeStuckExerciseCanKeepTheWeight() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel("KEEP | your check-ins were low, so give it another week"), null, new WorkoutHistory());
+
+        PlannedExercise decided = agent.analyzeStuckExercise(stuckRow(), newProfile());
+
+        assertEquals(20.0, decided.getWeightKg());
+    }
+
+    @Test
+    void analyzeStuckExerciseCanDeload() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel("DELOAD | 17.5 | a lighter week to recover"), null, new WorkoutHistory());
+
+        PlannedExercise decided = agent.analyzeStuckExercise(stuckRow(), newProfile());
+
+        assertEquals(17.5, decided.getWeightKg());
+        assertTrue(decided.getNote().startsWith("deload"));
+    }
+
+    @Test
+    void analyzeStuckExerciseMakesADeloadLighter() {
+        // the AI gave a heavier weight, so the weight drops by 10% instead
+        FitnessAgent agent = new FitnessAgent(new FakeModel("DELOAD | 25 | a lighter week"), null, new WorkoutHistory());
+
+        PlannedExercise decided = agent.analyzeStuckExercise(stuckRow(), newProfile());
+
+        assertEquals(18.0, decided.getWeightKg());
+    }
+
+    @Test
+    void analyzeStuckExerciseCanChangeTheExercise() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel("CHANGE | Inverted Row | 0 | a new way to train the back"), null, new WorkoutHistory());
+
+        PlannedExercise decided = agent.analyzeStuckExercise(stuckRow(), profileWith("equipment: dumbbell"));
+
+        assertEquals("Inverted Row", decided.getExercise().getName());
+    }
+
+    @Test
+    void analyzeStuckExerciseOnlyChangesToAnExerciseFromTheList() {
+        // the user has no barbell, so the Barbell Row is not on the list
+        FitnessAgent agent = new FitnessAgent(new FakeModel("CHANGE | Barbell Row | 40 | heavier rows"), null, new WorkoutHistory());
+
+        assertNull(agent.analyzeStuckExercise(stuckRow(), profileWith("equipment: dumbbell")));
+    }
+
+    @Test
+    void analyzeStuckExerciseReturnsNullForAnAnswerItCanNotRead() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel("I think you should rest more."), null, new WorkoutHistory());
+
+        assertNull(agent.analyzeStuckExercise(stuckRow(), newProfile()));
+    }
+
+    @Test
+    void analyzeStuckExerciseReturnsNullWhenNoModelCanBeReached() {
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        assertNull(agent.analyzeStuckExercise(stuckRow(), newProfile()));
+    }
+
     private static final String MONDAY_PUSH_UPS = "DAY monday: Upper body\nPush Up | 3 | 10 | 0";
+
+    // Dumbbell Row, 3 sets of 10 at 20 kg, today
+    private WorkoutDay todaysRows() {
+        WorkoutDay day = new WorkoutDay(LocalDate.now(), "Back");
+        day.getExercises().add(new PlannedExercise(ExerciseLibrary.getInstance().findExercise("Dumbbell Row"), 3, 10, 20));
+        return day;
+    }
+
+    // 5 hours of sleep, low energy, high stress and soreness: a score of 34
+    private CheckIn lowCheckIn(String comments) {
+        return new CheckIn(LocalDate.now(), 5, 2, 4, 4, comments);
+    }
+
+    // 8 hours of sleep, lots of energy, no stress or soreness: a score of 100
+    private CheckIn highCheckIn(String comments) {
+        return new CheckIn(LocalDate.now(), 8, 5, 1, 1, comments);
+    }
+
+    private CheckIn highCheckIn() {
+        return highCheckIn("");
+    }
+
+    private PlannedExercise stuckRow() {
+        PlannedExercise row = new PlannedExercise(ExerciseLibrary.getInstance().findExercise("Dumbbell Row"), 3, 10, 20);
+        row.setStuckCount(3);
+        return row;
+    }
 
     private UserProfile newProfile() {
         return new UserProfile(25, 180, 80, "beginner");

@@ -66,6 +66,10 @@ public class FitnessAgent
             + "Use the exercise names exactly as the search tool writes them. "
             + "Each set takes about 3 minutes, and one muscle can have at most 10 sets in a workout.\n";
 
+    // check-in comments with these words get a lighter workout and a doctor recommendation instead of the AI (UC07 3b)
+    private static final String[] SERIOUS_WORDS = {"chest pain", "sharp pain", "dizzy", "faint", "short of breath", "can't breathe",
+            "cannot breathe", "heart"};
+
     // the starter plan trains these muscles, in this order, until the workout is full
     private static final String[] STARTER_MUSCLES = {"quads", "chest", "back", "shoulders", "core", "hamstrings", "glutes", "biceps", "triceps", "calves"};
 
@@ -166,7 +170,7 @@ public class FitnessAgent
             return null;
         }
 
-        WorkoutPlan changed = copyPlan(plan);
+        WorkoutPlan changed = plan.copy();
         LocalDate from = LocalDate.now(); // days that already happened are never changed
         if (plan.getStartDate().isAfter(from)) {
             from = plan.getStartDate();
@@ -226,6 +230,122 @@ public class FitnessAgent
             }
         }
         return options;
+    }
+
+    /**
+     * F06: asks the AI what to do with an exercise whose weight has not gone up for a few workouts in a row:
+     * keep the weight, deload (a lower weight for a while) or change to a similar exercise. Returns the planned exercise
+     * to use from now on, with the reason in its note. Returns null when no AI model can be reached or its answer
+     * can't be read, so the exercise waits until the next workout (UC06 3a).
+     */
+    public PlannedExercise analyzeStuckExercise(PlannedExercise exercise, UserProfile profile) {
+        List<Exercise> matches = findSwapMatches(exercise.getExercise(), profile);
+        ArrayList<String> matchNames = new ArrayList<>();
+        for (Exercise match : matches) {
+            matchNames.add(match.getName());
+        }
+
+        String prompt = "The weight for " + exercise.getExercise().getName() + " has not gone up for " + exercise.getStuckCount()
+                + " workouts in a row. The plan has " + exercise.getSets() + " sets of " + exercise.getReps() + " reps at "
+                + exercise.getWeightKg() + " kg.\n" + describeProfile(profile)
+                + "Use the history tool to look at the user's recent workouts and check-ins. Then choose one of these:\n"
+                + "KEEP | <reason>   keeps the same weight for now\n"
+                + "DELOAD | <lower weight in kg> | <reason>   lowers the weight for a while so the body can recover\n";
+        if (!matchNames.isEmpty()) {
+            prompt += "CHANGE | <exercise name> | <starting weight in kg> | <reason>   switches to one of these exercises: "
+                    + String.join(", ", matchNames) + "\n";
+        }
+        prompt += "Reply with exactly one line in one of these formats, with a short reason.\n";
+
+        String reply = runAgentLoop(prompt);
+        if (reply == null) {
+            return null;
+        }
+
+        for (String line : reply.split("\n")) {
+            String[] parts = cleanLine(line).split("\\|");
+            String choice = parts[0].trim().toUpperCase();
+            String reason = parts[parts.length - 1].trim();
+            if (choice.equals("KEEP")) {
+                return decision(exercise, exercise.getExercise(), exercise.getWeightKg(), "kept the weight: " + reason);
+            }
+            if (choice.equals("DELOAD") && parts.length >= 3) {
+                double weightKg = readNumber(parts[1]);
+                if (weightKg < 0 || weightKg >= exercise.getWeightKg()) {
+                    weightKg = Math.round(exercise.getWeightKg() * 0.9 * 2) / 2.0; // 10% lighter, to the nearest 0.5 kg
+                }
+                return decision(exercise, exercise.getExercise(), weightKg, "deload: " + reason);
+            }
+            if (choice.equals("CHANGE") && parts.length >= 4) {
+                for (Exercise match : matches) {
+                    // only an exercise from the list, so it fits the user's equipment and injuries
+                    if (match.getName().equalsIgnoreCase(parts[1].trim())) {
+                        double weightKg = readNumber(parts[2]);
+                        if (weightKg < 0) {
+                            weightKg = match.getStartingWeight();
+                        }
+                        return decision(exercise, match, weightKg, "instead of " + exercise.getExercise().getName() + ": " + reason);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * F07: changes today's workout for how the user feels. The AI makes it easier, or a little harder, by changing the sets
+     * and reps, with the reason in the workout name. The weights stay the same, so the weight progression is not thrown off.
+     * Serious comments (UC07 3b) or no AI (UC07 4a) use a simple rule instead: a low score removes about a third of the sets.
+     */
+    public WorkoutDay adjustIntensity(WorkoutDay day, CheckIn checkIn) {
+        if (soundsSerious(checkIn.getComments())) {
+            return easierDay(day, "please see a doctor about how you feel before training hard, so today is lighter");
+        }
+
+        int score = checkIn.calculateScore();
+        String comments = "none";
+        if (checkIn.getComments() != null && !checkIn.getComments().isBlank()) {
+            comments = checkIn.getComments();
+        }
+        String recentScores = "";
+        for (CheckIn recent : history.getRecentCheckIns(7)) {
+            recentScores += recent.getDate() + ": " + recent.calculateScore() + "  ";
+        }
+        String prompt = "Today's workout:\n" + describeDay(day)
+                + "The user's daily check-in: " + checkIn.getSleepHours() + " hours of sleep, energy " + checkIn.getEnergy()
+                + " of 5, stress " + checkIn.getStress() + " of 5, soreness " + checkIn.getSoreness() + " of 5. Comments: " + comments + "\n"
+                + "That is a score of " + score + " out of 100, and a normal day is " + CheckIn.LOW_SCORE + " to " + CheckIn.HIGH_SCORE + ".\n"
+                + "Check-in scores from the last week: " + recentScores + "\n"
+                + "Make today's workout easier if the user feels bad, or a little harder if they feel great, by changing only the sets and reps. "
+                + "Keep the same exercises and weights, and do not remove the workout. "
+                + "If the scores have been low for several days in a row, suggest a lighter week. "
+                + "Put the reason in the workout name, for example \"DAY " + day.getDate() + ": Upper body, lighter (you slept badly)\".\n"
+                + PLAN_FORMAT;
+
+        String reply = runAgentLoop(prompt);
+        if (reply == null) {
+            if (score < CheckIn.LOW_SCORE) {
+                return easierDay(day, "lighter today because your check-in score is low");
+            }
+            return day.copy(day.getDate()); // never harder without the AI
+        }
+
+        WorkoutPlan today = new WorkoutPlan(day.getDate());
+        today.getDays().add(day.copy(day.getDate()));
+        applyDays(today, reply, day.getDate(), day.getDate());
+        if (today.getDays().isEmpty()) {
+            return day.copy(day.getDate()); // the AI removed the workout, which it was told not to do
+        }
+
+        WorkoutDay adjusted = today.getDays().get(0);
+        for (PlannedExercise planned : adjusted.getExercises()) {
+            for (PlannedExercise original : day.getExercises()) {
+                if (original.getExercise().getName().equalsIgnoreCase(planned.getExercise().getName())) {
+                    planned.setWeightKg(original.getWeightKg());
+                }
+            }
+        }
+        return adjusted;
     }
 
 
@@ -297,6 +417,7 @@ public class FitnessAgent
 			}
 
 			String reply = model.send(conversation).trim();
+            reply = reply.replace("TOOL:", "TOOL "); // models sometimes write "TOOL: history: 14"
 
 			//look for "TOOL name: input" anywhere, small models sometimes write it in the middle of a sentence
 			String toolLine = null;
@@ -468,16 +589,53 @@ public class FitnessAgent
         String text = "";
         for (WorkoutDay day : plan.getDays()) {
             if (!day.getDate().isBefore(LocalDate.now())) {
-                text += "DAY " + day.getDate() + " " + day.getDate().getDayOfWeek().toString().toLowerCase() + ": " + day.getNote() + "\n";
-                for (PlannedExercise planned : day.getExercises()) {
-                    text += planned.getExercise().getName() + " | " + planned.getSets() + " | " + planned.getReps() + " | " + planned.getWeightKg() + "\n";
-                }
+                text += describeDay(day);
             }
         }
         if (text.isEmpty()) {
             return "(no workouts planned from today on)\n";
         }
         return text;
+    }
+
+    // one day in the same format the AI writes
+    private String describeDay(WorkoutDay day) {
+        String text = "DAY " + day.getDate() + " " + day.getDate().getDayOfWeek().toString().toLowerCase() + ": " + day.getNote() + "\n";
+        for (PlannedExercise planned : day.getExercises()) {
+            text += planned.getExercise().getName() + " | " + planned.getSets() + " | " + planned.getReps() + " | " + planned.getWeightKg() + "\n";
+        }
+        return text;
+    }
+
+    // F07: the day with about a third of the sets removed (at least 1 set each), and the reason in its name
+    private WorkoutDay easierDay(WorkoutDay day, String reason) {
+        WorkoutDay easier = day.copy(day.getDate());
+        easier.setNote(day.getNote() + " (" + reason + ")");
+        for (PlannedExercise planned : easier.getExercises()) {
+            int sets = planned.getSets() - (int) Math.round(planned.getSets() / 3.0);
+            planned.setSets(Math.max(1, sets));
+        }
+        return easier;
+    }
+
+    // UC07 3b: comments that need a doctor more than a workout
+    private boolean soundsSerious(String comments) {
+        if (comments == null) {
+            return false;
+        }
+        for (String words : SERIOUS_WORDS) {
+            if (comments.toLowerCase().contains(words)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // F06: the planned exercise to use from now on, with a new stuck count of 0
+    private PlannedExercise decision(PlannedExercise stuck, Exercise exercise, double weightKg, String note) {
+        PlannedExercise decided = new PlannedExercise(exercise, stuck.getSets(), stuck.getReps(), weightKg);
+        decided.setNote(note);
+        return decided;
     }
 
     // reads the DAY blocks in a plan written by the AI and puts them in the plan.
@@ -514,9 +672,12 @@ public class FitnessAgent
             // a DAY with no exercises that is not a rest day is a mistake by the AI, so it changes nothing
             if (hasExercises || rest) {
                 for (LocalDate date : findDates(headers.get(i), from, end)) {
+                    WorkoutDay oldDay = findDay(plan, date);
                     plan.getDays().removeIf(day -> day.getDate().equals(date));
                     if (hasExercises) {
-                        plan.getDays().add(copyDay(workouts.get(i), date));
+                        WorkoutDay newDay = workouts.get(i).copy(date);
+                        keepStuckCounts(oldDay, newDay);
+                        plan.getDays().add(newDay);
                     }
                 }
             }
@@ -603,24 +764,27 @@ public class FitnessAgent
         return line;
     }
 
-    // a new day with its own copies of the exercises, so changing one day never changes another
-    private WorkoutDay copyDay(WorkoutDay day, LocalDate date) {
-        WorkoutDay copy = new WorkoutDay(date, day.getNote());
-        for (PlannedExercise planned : day.getExercises()) {
-            PlannedExercise plannedCopy = new PlannedExercise(planned.getExercise(), planned.getSets(), planned.getReps(), planned.getWeightKg());
-            plannedCopy.setStuckCount(planned.getStuckCount());
-            plannedCopy.setNote(planned.getNote());
-            copy.getExercises().add(plannedCopy);
+    private WorkoutDay findDay(WorkoutPlan plan, LocalDate date) {
+        for (WorkoutDay day : plan.getDays()) {
+            if (day.getDate().equals(date)) {
+                return day;
+            }
         }
-        return copy;
+        return null;
     }
 
-    private WorkoutPlan copyPlan(WorkoutPlan plan) {
-        WorkoutPlan copy = new WorkoutPlan(plan.getStartDate());
-        for (WorkoutDay day : plan.getDays()) {
-            copy.getDays().add(copyDay(day, day.getDate()));
+    // an exercise the AI wrote again keeps how many workouts in a row it has been stuck (F06)
+    private void keepStuckCounts(WorkoutDay oldDay, WorkoutDay newDay) {
+        if (oldDay == null) {
+            return;
         }
-        return copy;
+        for (PlannedExercise planned : newDay.getExercises()) {
+            for (PlannedExercise old : oldDay.getExercises()) {
+                if (old.getExercise().getName().equalsIgnoreCase(planned.getExercise().getName())) {
+                    planned.setStuckCount(old.getStuckCount());
+                }
+            }
+        }
     }
 
     // the last day the plan covers. A plan always covers whole weeks from its start date

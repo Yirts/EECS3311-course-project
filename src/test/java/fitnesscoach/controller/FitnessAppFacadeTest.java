@@ -15,6 +15,8 @@ import org.junit.jupiter.api.io.TempDir;
 import fitnesscoach.ai.AIModel;
 import fitnesscoach.data.DataStore;
 import fitnesscoach.data.UserProfile;
+import fitnesscoach.history.CheckIn;
+import fitnesscoach.history.SetLog;
 import fitnesscoach.plan.ExerciseLibrary;
 import fitnesscoach.plan.PlannedExercise;
 import fitnesscoach.plan.WorkoutDay;
@@ -531,8 +533,345 @@ class FitnessAppFacadeTest {
         assertTrue(savedData().loadProfile().getBoundaries().isEmpty());
     }
 
+    // ----- F07: submitDailyCheckIn() -----
+
+    @Test
+    void submitDailyCheckInSavesTheCheckIn() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+
+        app.submitDailyCheckIn(normalCheckIn());
+
+        assertEquals(1, savedData().loadHistory().getCheckIns().size());
+    }
+
+    @Test
+    void aNormalCheckInKeepsTheWorkout() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel()); // no replies, so the AI must not be asked
+        WorkoutDay today = app.getCurrentPlan().getDays().get(0);
+
+        assertSame(today, app.submitDailyCheckIn(normalCheckIn()));
+    }
+
+    @Test
+    void aLowCheckInChangesTodaysWorkout() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel(LIGHTER_ROWS));
+
+        app.submitDailyCheckIn(lowCheckIn(""));
+
+        assertEquals(2, rowOn(app, 0).getSets());
+    }
+
+    @Test
+    void rejectingTheChangeBringsBackTheNormalWorkout() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel(LIGHTER_ROWS));
+        app.submitDailyCheckIn(lowCheckIn(""));
+
+        app.undoChange();
+
+        assertEquals(3, rowOn(app, 0).getSets());
+    }
+
+    @Test
+    void checkInCommentsAreReadByTheAi() {
+        FakeModel model = new FakeModel(LIGHTER_ROWS);
+        FitnessAppFacade app = makeAppWithTodaysWorkout(model);
+        CheckIn checkIn = new CheckIn(LocalDate.now(), 7.5, 4, 2, 2, "my lower back is a bit sore");
+
+        app.submitDailyCheckIn(checkIn);
+
+        assertEquals(1, model.prompts.size());
+    }
+
+    @Test
+    void aCheckInWithNoWorkoutTodayReturnsNull() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        assertNull(app.submitDailyCheckIn(lowCheckIn("")));
+    }
+
+    // ----- F05: startWorkout(), logSet(), skipExercise() and finishWorkout() -----
+
+    @Test
+    void startWorkoutGivesTodaysWorkout() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+
+        assertEquals(LocalDate.now(), app.startWorkout().getDate());
+    }
+
+    @Test
+    void startWorkoutWithNothingTodayStartsTheNextWorkoutEarly() {
+        WorkoutPlan plan = new WorkoutPlan(LocalDate.now());
+        plan.getDays().add(rowDay(LocalDate.now().plusDays(2)));
+        savedData().savePlan(plan);
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        assertEquals(LocalDate.now().plusDays(2), app.startWorkout().getDate());
+    }
+
+    @Test
+    void startWorkoutWithNoWorkoutsLeftStartsAFreeWorkout() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        assertNull(app.startWorkout());
+        assertNotNull(app.getCurrentLog());
+    }
+
+    @Test
+    void startWorkoutAgainGoesOnWithTheSameWorkout() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+        app.logSet(new SetLog("Dumbbell Row", 10, 20, 7));
+
+        app.startWorkout();
+
+        assertEquals(1, app.getCurrentLog().getSets().size());
+    }
+
+    @Test
+    void aWorkoutGoesOnAfterTheAppRestarts() {
+        FitnessAppFacade first = makeAppWithTodaysWorkout(new FakeModel());
+        first.startWorkout();
+        first.logSet(new SetLog("Dumbbell Row", 10, 20, 7));
+
+        FitnessAppFacade second = makeApp(new FakeModel());
+        second.startWorkout();
+
+        assertEquals(1, second.getCurrentLog().getSets().size());
+    }
+
+    @Test
+    void aWorkoutAfterARestartUsesThePlansOwnDay() {
+        FitnessAppFacade first = makeAppWithTodaysWorkout(new FakeModel());
+        first.startWorkout();
+
+        FitnessAppFacade second = makeApp(new FakeModel());
+
+        assertSame(second.getCurrentPlan().getDays().get(0), second.getCurrentLog().getDay());
+    }
+
+    @Test
+    void logSetSavesRightAway() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+
+        app.logSet(new SetLog("Dumbbell Row", 10, 20, 7));
+
+        assertEquals(1, savedData().loadHistory().getCurrentLog().getSets().size());
+    }
+
+    @Test
+    void logSetBeforeStartingThrows() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+
+        assertThrows(IllegalStateException.class, () -> app.logSet(new SetLog("Dumbbell Row", 10, 20, 7)));
+    }
+
+    @Test
+    void finishWorkoutSavesTheWorkout() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+        logRows(app, 10);
+
+        app.finishWorkout();
+
+        assertEquals(1, savedData().loadHistory().getLogs().size());
+    }
+
+    @Test
+    void skipExerciseMarksItAsSkipped() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+
+        app.skipExercise(rowOn(app, 0));
+
+        assertEquals("skipped", savedData().loadPlan().getDays().get(0).getExercises().get(0).getNote());
+    }
+
+    @Test
+    void aSkippedExerciseDoesNotCountAsAFailedAttempt() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+        app.skipExercise(rowOn(app, 0));
+
+        app.finishWorkout();
+
+        assertEquals(0, rowOn(app, 1).getStuckCount());
+    }
+
+    @Test
+    void getProgressHasTheHeaviestWeightOfTheWorkout() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+        logRows(app, 10);
+
+        app.finishWorkout();
+
+        assertEquals(20.0, app.getProgress("Dumbbell Row").get(LocalDate.now()));
+    }
+
+    // ----- F06: the next weights after finishWorkout(), and overrideWeight() -----
+
+    @Test
+    void finishWorkoutRaisesTheWeightForNextTime() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+        logRows(app, 10);
+
+        app.finishWorkout();
+
+        assertEquals(22.5, rowOn(app, 1).getWeightKg());
+    }
+
+    @Test
+    void finishWorkoutSavesTheNewWeights() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+        logRows(app, 10);
+
+        app.finishWorkout();
+
+        assertEquals(22.5, savedData().loadPlan().getDays().get(1).getExercises().get(0).getWeightKg());
+    }
+
+    @Test
+    void finishWorkoutAfterARestartStillRaisesTheWeight() {
+        // each CLI command is a new run of the app, so the workout is started and finished in different runs
+        FitnessAppFacade first = makeAppWithTodaysWorkout(new FakeModel());
+        first.startWorkout();
+        logRows(first, 10);
+
+        FitnessAppFacade second = makeApp(new FakeModel());
+        second.finishWorkout();
+
+        assertEquals(22.5, rowOn(second, 1).getWeightKg());
+    }
+
+    @Test
+    void finishWorkoutKeepsTheWeightWhenRepsAreMissed() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+        logRows(app, 8);
+
+        app.finishWorkout();
+
+        assertEquals(20.0, rowOn(app, 1).getWeightKg());
+    }
+
+    @Test
+    void finishWorkoutCountsAWorkoutWithoutProgress() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+        logRows(app, 8);
+
+        app.finishWorkout();
+
+        assertEquals(1, rowOn(app, 1).getStuckCount());
+    }
+
+    @Test
+    void finishWorkoutSendsAStuckExerciseToTheAgent() {
+        // not heavier for 2 workouts, and today makes 3
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel("DELOAD | 17.5 | a lighter week so your back can recover"));
+        rowOn(app, 0).setStuckCount(2);
+        rowOn(app, 1).setStuckCount(2);
+        app.startWorkout();
+        logRows(app, 8);
+
+        app.finishWorkout();
+
+        assertEquals(17.5, rowOn(app, 1).getWeightKg());
+    }
+
+    @Test
+    void aStuckExerciseWaitsWhenTheAiIsOffline() {
+        FakeModel model = new FakeModel();
+        model.available = false;
+        FitnessAppFacade app = makeAppWithTodaysWorkout(model);
+        rowOn(app, 0).setStuckCount(2);
+        rowOn(app, 1).setStuckCount(2);
+        app.startWorkout();
+        logRows(app, 8);
+
+        app.finishWorkout();
+
+        assertEquals(3, rowOn(app, 1).getStuckCount());
+    }
+
+    @Test
+    void overrideWeightChangesTheRestOfThePlan() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+
+        app.overrideWeight(rowOn(app, 0), 25);
+
+        assertEquals(25.0, rowOn(app, 1).getWeightKg());
+    }
+
+    @Test
+    void overrideWeightIsSaved() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+
+        app.overrideWeight(rowOn(app, 0), 25);
+
+        assertEquals(25.0, savedData().loadPlan().getDays().get(1).getExercises().get(0).getWeightKg());
+    }
+
+    @Test
+    void overrideWeightIsRememberedByTheCoach() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+
+        app.overrideWeight(rowOn(app, 0), 25);
+
+        assertTrue(savedData().loadMemory().get(0).contains("Dumbbell Row"));
+    }
+
+    @Test
+    void overrideWeightRejectsANegativeWeight() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+
+        assertThrows(IllegalArgumentException.class, () -> app.overrideWeight(rowOn(app, 0), -5));
+    }
+
+    private static final String LIGHTER_ROWS = "DAY " + LocalDate.now() + ": Back, lighter (you slept badly)\nDumbbell Row | 2 | 10 | 20";
+
     private UserProfile newProfile() {
         return new UserProfile(25, 180, 80, "beginner");
+    }
+
+    // 7.5 hours of sleep, good energy, little stress and soreness: a score of 80
+    private CheckIn normalCheckIn() {
+        return new CheckIn(LocalDate.now(), 7.5, 4, 2, 2, "");
+    }
+
+    // 5 hours of sleep, low energy, high stress and soreness: a score of 34
+    private CheckIn lowCheckIn(String comments) {
+        return new CheckIn(LocalDate.now(), 5, 2, 4, 4, comments);
+    }
+
+    // a facade with a saved plan that has Dumbbell Row (3 sets of 10 at 20 kg) today and a week from today
+    private FitnessAppFacade makeAppWithTodaysWorkout(FakeModel model, String... boundaries) {
+        WorkoutPlan plan = new WorkoutPlan(LocalDate.now());
+        plan.getDays().add(rowDay(LocalDate.now()));
+        plan.getDays().add(rowDay(LocalDate.now().plusWeeks(1)));
+        savedData().savePlan(plan);
+        return makeAppWithProfile(model, boundaries);
+    }
+
+    private WorkoutDay rowDay(LocalDate date) {
+        WorkoutDay day = new WorkoutDay(date, "Back");
+        day.getExercises().add(new PlannedExercise(ExerciseLibrary.getInstance().findExercise("Dumbbell Row"), 3, 10, 20));
+        return day;
+    }
+
+    // logs the 3 planned sets of Dumbbell Row at 20 kg, with this many reps each
+    private void logRows(FitnessAppFacade app, int reps) {
+        for (int i = 0; i < 3; i++) {
+            app.logSet(new SetLog("Dumbbell Row", reps, 20, 7));
+        }
+    }
+
+    // the Dumbbell Row on one day of the current plan
+    private PlannedExercise rowOn(FitnessAppFacade app, int dayIndex) {
+        return app.getCurrentPlan().getDays().get(dayIndex).getExercises().get(0);
     }
 
     // a facade that starts with a saved profile and a saved plan with push ups on the next two mondays

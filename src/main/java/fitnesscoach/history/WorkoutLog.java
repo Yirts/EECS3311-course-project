@@ -51,6 +51,12 @@ public class WorkoutLog
 	}
 
 
+    // a saved workout has its own copy of the day, so after loading it is pointed back at the plan's day
+    public void setDay(WorkoutDay day) {
+        this.day = day;
+    }
+
+
 	public List<SetLog> getSets()
 	{
 		return sets;

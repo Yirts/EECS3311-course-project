@@ -150,6 +150,57 @@ class WorkoutPlanTester
 	}
 
 
+    // ----- getStuckExercises() and copy() (F06) -----
+
+    @Test
+    void getStuckExercisesFindsAnExerciseStuckForThreeWorkouts() {
+        WorkoutPlan plan = makePlan(LocalDate.now(), makeExercise("Goblet Squat", "quads", "dumbbell"), 3);
+        plan.getDays().get(0).getExercises().get(0).setStuckCount(3);
+
+        assertEquals(1, plan.getStuckExercises().size());
+    }
+
+    @Test
+    void getStuckExercisesIgnoresTwoWorkoutsInARow() {
+        WorkoutPlan plan = makePlan(LocalDate.now(), makeExercise("Goblet Squat", "quads", "dumbbell"), 3);
+        plan.getDays().get(0).getExercises().get(0).setStuckCount(2);
+
+        assertEquals(0, plan.getStuckExercises().size());
+    }
+
+    @Test
+    void getStuckExercisesListsEachExerciseOnce() {
+        Exercise squat = makeExercise("Goblet Squat", "quads", "dumbbell");
+        WorkoutPlan plan = makePlan(LocalDate.now(), squat, 3);
+        WorkoutDay nextWeek = new WorkoutDay(LocalDate.now().plusWeeks(1), "Workout");
+        nextWeek.getExercises().add(new PlannedExercise(squat, 3, 10, 20));
+        plan.getDays().add(nextWeek);
+        for (WorkoutDay day : plan.getDays()) {
+            day.getExercises().get(0).setStuckCount(3);
+        }
+
+        assertEquals(1, plan.getStuckExercises().size());
+    }
+
+    @Test
+    void getStuckExercisesIgnoresDaysThatAlreadyHappened() {
+        WorkoutPlan plan = makePlan(LocalDate.now().minusDays(1), makeExercise("Goblet Squat", "quads", "dumbbell"), 3);
+        plan.getDays().get(0).getExercises().get(0).setStuckCount(3);
+
+        assertEquals(0, plan.getStuckExercises().size());
+    }
+
+    @Test
+    void copyHasItsOwnExercises() {
+        WorkoutPlan plan = makePlan(LocalDate.now(), makeExercise("Goblet Squat", "quads", "dumbbell"), 3);
+
+        WorkoutPlan copy = plan.copy();
+        copy.getDays().get(0).getExercises().get(0).setWeightKg(50);
+
+        assertEquals(20.0, plan.getDays().get(0).getExercises().get(0).getWeightKg());
+    }
+
+
 	private UserProfile makeProfile()
 	{
 		UserProfile profile = new UserProfile(25, 180, 80, "beginner");

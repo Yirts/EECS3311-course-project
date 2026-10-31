@@ -26,6 +26,12 @@ A Java desktop app with a JavaFX GUI and a command-line interface (CLI). An AI a
 | `plan change "only 30 minutes on tuesday"` | The AI changes only the workouts your request is about. You see the changed days, then confirm, undo, regenerate or edit the request (F03) |
 | `plan undo` | Puts back your plan from before the last change, even after the app was closed (F03) |
 | `exercise swap "Barbell Squat" --reason pain` | Gives 3 other exercises for the same muscles with your equipment, each with a reason. You pick one for that day or the rest of the plan. If the reason is pain, future plans avoid the old exercise (F04) |
+| `checkin --sleep 6 --energy 2 --stress 3` | Daily check-in, also with `--soreness` and `--comments` (anything left out is asked). On a bad or great day the AI makes today's workout easier or harder and says why, and you accept or reject it (F07) |
+| `workout start` | Offers the check-in, then shows today's workout (or starts the next one early) and the first set (F05) |
+| `workout log --reps 8 --weight 60 --difficulty 8` | Logs the next set and saves it right away. Add `--exercise "Name"` for a different exercise (F05) |
+| `workout skip` | Skips the current exercise without counting it as a failed attempt (F05) |
+| `workout finish` | Saves the workout and shows the total, any new records and your next weights. Exercises that have been stuck for 3 workouts go to the AI for a lighter week or a new exercise (F05, F06) |
+| `plan progress` | Shows the weights for your next workouts, and lets you change one (F06) |
 
 ## Run it with Maven
 

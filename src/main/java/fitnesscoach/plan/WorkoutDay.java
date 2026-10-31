@@ -41,4 +41,18 @@ public class WorkoutDay
 	{
 		return exercises;
 	}
+
+
+    // a copy of this day on another date, with its own copies of the exercises,
+    // so changing one day never changes another
+    public WorkoutDay copy(LocalDate newDate) {
+        WorkoutDay copy = new WorkoutDay(newDate, note);
+        for (PlannedExercise planned : exercises) {
+            PlannedExercise plannedCopy = new PlannedExercise(planned.getExercise(), planned.getSets(), planned.getReps(), planned.getWeightKg());
+            plannedCopy.setStuckCount(planned.getStuckCount());
+            plannedCopy.setNote(planned.getNote());
+            copy.getExercises().add(plannedCopy);
+        }
+        return copy;
+    }
 }

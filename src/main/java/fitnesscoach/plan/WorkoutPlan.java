@@ -11,6 +11,7 @@ public class WorkoutPlan
 {
 	private static final int MINUTES_PER_SET = 3;
 	private static final int MAX_SETS_PER_MUSCLE = 10;
+    private static final int STUCK_LIMIT = 3; // workouts in a row without a heavier weight
 
 	private LocalDate startDate;
 	private List<WorkoutDay> days;
@@ -146,4 +147,32 @@ public class WorkoutPlan
 		}
 		return problems;
 	}
+
+
+    // F06: the next planned copy of each exercise whose weight has not gone up for 3 workouts in a row
+    public List<PlannedExercise> getStuckExercises() {
+        ArrayList<PlannedExercise> stuck = new ArrayList<>();
+        ArrayList<String> names = new ArrayList<>();
+        for (WorkoutDay day : days) {
+            if (!day.getDate().isBefore(LocalDate.now())) {
+                for (PlannedExercise planned : day.getExercises()) {
+                    String name = planned.getExercise().getName();
+                    if (planned.getStuckCount() >= STUCK_LIMIT && !names.contains(name)) {
+                        stuck.add(planned);
+                        names.add(name);
+                    }
+                }
+            }
+        }
+        return stuck;
+    }
+
+    // a full copy, so changing the copy never changes this plan (used for undo)
+    public WorkoutPlan copy() {
+        WorkoutPlan copy = new WorkoutPlan(startDate);
+        for (WorkoutDay day : days) {
+            copy.getDays().add(day.copy(day.getDate()));
+        }
+        return copy;
+    }
 }

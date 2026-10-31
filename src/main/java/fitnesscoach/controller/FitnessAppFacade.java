@@ -13,7 +13,10 @@ import fitnesscoach.ai.LlamaAdapter;
 import fitnesscoach.ai.OllamaClient;
 import fitnesscoach.data.DataStore;
 import fitnesscoach.data.UserProfile;
+import fitnesscoach.history.CheckIn;
+import fitnesscoach.history.SetLog;
 import fitnesscoach.history.WorkoutHistory;
+import fitnesscoach.history.WorkoutLog;
 import fitnesscoach.plan.Exercise;
 import fitnesscoach.plan.ExerciseLibrary;
 import fitnesscoach.plan.PlannedExercise;
@@ -226,12 +229,137 @@ public class FitnessAppFacade {
         dataStore.savePlan(currentPlan);
     }
 
+    /**
+     * F05: starts today's workout and returns its day. With no workout today, the next planned one starts early,
+     * and with none left it is a free workout with no planned day, so null is returned (UC05 3a).
+     * A workout that was already started goes on where it stopped, with its logged sets (UC05 4c).
+     */
+    public WorkoutDay startWorkout() {
+        if (history.getCurrentLog() != null) {
+            return history.getCurrentLog().getDay();
+        }
+
+        WorkoutDay day = null;
+        if (currentPlan != null) {
+            day = currentPlan.getTodaysWorkout();
+            if (day == null) {
+                day = findNextWorkout();
+            }
+        }
+        history.startWorkout(day);
+        dataStore.saveHistory(history);
+        return day;
+    }
+
+    /** F05: adds one set to the workout and saves it right away, so nothing is lost if the app closes. */
+    public void logSet(SetLog set) {
+        history.logSet(set);
+        dataStore.saveHistory(history);
+    }
+
+    /** F05: marks an exercise of the workout as skipped, so it does not count as a failed attempt (UC05 4b). */
+    public void skipExercise(PlannedExercise exercise) {
+        exercise.setNote("skipped");
+        if (currentPlan != null) {
+            dataStore.savePlan(currentPlan);
+        }
+    }
+
+    /**
+     * F05 and F06: finishes and saves the workout. WorkoutHistory tells its observers (Observer pattern), so
+     * WeightProgression works out the next weights, and they go to the rest of the plan.
+     * Exercises that have been stuck for a while go to the agent for a deload or a new exercise.
+     */
+    public WorkoutLog finishWorkout() {
+        WorkoutLog log = history.finishWorkout();
+        if (log.getDay() != null && currentPlan != null) {
+            carryWeightsForward(log);
+            if (profile != null) {
+                for (PlannedExercise stuck : currentPlan.getStuckExercises()) {
+                    PlannedExercise decision = agent.analyzeStuckExercise(stuck, profile);
+                    if (decision != null) {
+                        useFromNowOn(stuck.getExercise().getName(), decision, log.getDay().getDate());
+                    }
+                }
+                dataStore.saveMemory(agent.getMemory());
+            }
+            dataStore.savePlan(currentPlan);
+        }
+        dataStore.saveHistory(history);
+        return log;
+    }
+
+    /** F06: the user's own weight for an exercise, used from its day on. The agent remembers it (UC06 6a). */
+    public void overrideWeight(PlannedExercise exercise, double weightKg) {
+        if (weightKg < 0 || weightKg > 500) {
+            throw new IllegalArgumentException("The weight must be between 0 and 500 kg.");
+        }
+
+        String name = exercise.getExercise().getName();
+        double oldWeight = exercise.getWeightKg();
+        exercise.setWeightKg(weightKg);
+        exercise.setStuckCount(0);
+        WorkoutDay day = findDayOf(exercise);
+        if (day != null) {
+            for (WorkoutDay later : currentPlan.getDays()) {
+                if (later.getDate().isAfter(day.getDate())) {
+                    for (PlannedExercise planned : later.getExercises()) {
+                        if (planned.getExercise().getName().equalsIgnoreCase(name)) {
+                            planned.setWeightKg(weightKg);
+                            planned.setStuckCount(0);
+                        }
+                    }
+                }
+            }
+            dataStore.savePlan(currentPlan);
+        }
+        agent.getMemory().add("The user changed the planned weight for " + name + " from " + oldWeight + " kg to " + weightKg + " kg");
+        dataStore.saveMemory(agent.getMemory());
+    }
+
+    /**
+     * F07: saves the check-in and returns today's workout. When the score is low or high, or the user wrote comments,
+     * the agent changes the workout first. The change is accepted like a plan change, so Reject is undoChange().
+     * Returns null when no workout is planned today.
+     */
+    public WorkoutDay submitDailyCheckIn(CheckIn checkIn) {
+        history.addCheckIn(checkIn);
+        dataStore.saveHistory(history);
+        if (currentPlan == null || currentPlan.getTodaysWorkout() == null) {
+            return null;
+        }
+
+        WorkoutDay today = currentPlan.getTodaysWorkout();
+        int score = checkIn.calculateScore();
+        boolean hasComments = checkIn.getComments() != null && !checkIn.getComments().isBlank();
+        if (score >= CheckIn.LOW_SCORE && score <= CheckIn.HIGH_SCORE && !hasComments) {
+            return today; // UC07 3a: a normal day, so the workout stays the same
+        }
+
+        WorkoutDay adjusted = agent.adjustIntensity(today, checkIn);
+        dataStore.saveMemory(agent.getMemory());
+        WorkoutPlan newPlan = currentPlan.copy();
+        newPlan.getDays().set(currentPlan.getDays().indexOf(today), adjusted);
+        acceptPlan(newPlan);
+        return adjusted;
+    }
+
+    /** F08: the heaviest weight lifted for the exercise on each date (the workout summary also uses it for records). */
+    public Map<LocalDate, Double> getProgress(String exerciseName) {
+        return history.getProgress(exerciseName);
+    }
+
     public UserProfile getProfile() {
         return profile;
     }
 
     public WorkoutPlan getCurrentPlan() {
         return currentPlan;
+    }
+
+    // the workout that was started and not finished yet, or null
+    public WorkoutLog getCurrentLog() {
+        return history.getCurrentLog();
     }
 
     // loads everything that was saved last time, when the app starts
@@ -241,6 +369,16 @@ public class FitnessAppFacade {
         oldPlans = new Stack<>();
         oldPlans.addAll(dataStore.loadOldPlans());
         history = dataStore.loadHistory();
+
+        // a saved workout in progress has its own copy of its day, so it is pointed back at the plan's day
+        WorkoutLog current = history.getCurrentLog();
+        if (current != null && current.getDay() != null && currentPlan != null) {
+            for (WorkoutDay day : currentPlan.getDays()) {
+                if (day.getDate().equals(current.getDay().getDate())) {
+                    current.setDay(day);
+                }
+            }
+        }
 
         agent = new FitnessAgent(mainModel, backupModel, history);
         agent.setMemory(dataStore.loadMemory());
@@ -325,19 +463,80 @@ public class FitnessAppFacade {
 
     // true when the exercise called name is already in the workout that has this planned exercise
     private boolean isInSameWorkout(PlannedExercise exercise, String name) {
-        if (currentPlan == null) {
+        WorkoutDay day = findDayOf(exercise);
+        if (day == null) {
             return false;
+        }
+        for (PlannedExercise planned : day.getExercises()) {
+            if (planned.getExercise().getName().equalsIgnoreCase(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // the day of the current plan that has this planned exercise, or null
+    private WorkoutDay findDayOf(PlannedExercise exercise) {
+        if (currentPlan == null) {
+            return null;
         }
         for (WorkoutDay day : currentPlan.getDays()) {
             if (day.getExercises().contains(exercise)) {
-                for (PlannedExercise planned : day.getExercises()) {
-                    if (planned.getExercise().getName().equalsIgnoreCase(name)) {
-                        return true;
+                return day;
+            }
+        }
+        return null;
+    }
+
+    // UC05 3a: the first workout after today
+    private WorkoutDay findNextWorkout() {
+        for (WorkoutDay day : currentPlan.getDays()) {
+            if (day.getDate().isAfter(LocalDate.now())) {
+                return day;
+            }
+        }
+        return null;
+    }
+
+    // F06: the new weights from the finished workout go to every later workout with the same exercise.
+    // Exercises with no logged sets were skipped, so they stay the same
+    private void carryWeightsForward(WorkoutLog log) {
+        for (PlannedExercise done : log.getDay().getExercises()) {
+            boolean logged = false;
+            for (SetLog set : log.getSets()) {
+                if (set.getExerciseName().equalsIgnoreCase(done.getExercise().getName())) {
+                    logged = true;
+                }
+            }
+            if (logged) {
+                for (WorkoutDay day : currentPlan.getDays()) {
+                    if (day.getDate().isAfter(log.getDay().getDate())) {
+                        for (PlannedExercise planned : day.getExercises()) {
+                            if (planned.getExercise().getName().equalsIgnoreCase(done.getExercise().getName())) {
+                                planned.setWeightKg(done.getWeightKg());
+                                planned.setStuckCount(done.getStuckCount());
+                            }
+                        }
                     }
                 }
             }
         }
-        return false;
+    }
+
+    // F06: the agent's decision for a stuck exercise is used in every workout after the finished one
+    private void useFromNowOn(String exerciseName, PlannedExercise decision, LocalDate finishedDate) {
+        for (WorkoutDay day : currentPlan.getDays()) {
+            if (day.getDate().isAfter(finishedDate)) {
+                for (PlannedExercise planned : day.getExercises()) {
+                    if (planned.getExercise().getName().equalsIgnoreCase(exerciseName)) {
+                        planned.setExercise(decision.getExercise());
+                        planned.setWeightKg(decision.getWeightKg());
+                        planned.setStuckCount(0);
+                        planned.setNote(decision.getNote());
+                    }
+                }
+            }
+        }
     }
 
     private boolean isAboutPain(String reason) {

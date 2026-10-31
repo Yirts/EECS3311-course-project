@@ -6,6 +6,8 @@ import java.time.LocalDate;
 
 import org.junit.jupiter.api.Test;
 
+import fitnesscoach.plan.WorkoutDay;
+
 class WorkoutLogTester
 {
 	//new log has no sets
@@ -58,4 +60,15 @@ class WorkoutLogTester
 
 		assertEquals(500, log.getWeightLifted(), "Failed Test 3 getWeightLifted");
 	}
+
+
+    @Test
+    void setDayPointsTheLogAtAnotherDay() {
+        WorkoutLog log = new WorkoutLog(LocalDate.now(), null);
+        WorkoutDay day = new WorkoutDay(LocalDate.now(), "Legs");
+
+        log.setDay(day);
+
+        assertSame(day, log.getDay());
+    }
 }
