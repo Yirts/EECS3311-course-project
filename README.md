@@ -15,6 +15,16 @@ A Java desktop app with a JavaFX GUI and a command-line interface (CLI). An AI a
 2. **GUI:** right-click `src/main/java/fitnesscoach/ui/CommandLineApp.java` > **Run As > Java Application**.
 3. **CLI:** open **Run > Run Configurations > CommandLineApp > Arguments**, type a command such as `help` under **Program arguments**, and press **Run**.
 
+## The window
+
+The window has one tab for each part of the app:
+
+- **Profile:** set up your profile and confirm the AI's boundaries.
+- **Workout Plan:** generate, change and undo your plan, swap exercises and change weights.
+- **Workout:** do the daily check-in, then log your workout set by set with a rest timer.
+
+While the AI is thinking, a spinner shows at the bottom of the window and the tabs wait.
+
 ## CLI commands
 
 | Command | What it does |

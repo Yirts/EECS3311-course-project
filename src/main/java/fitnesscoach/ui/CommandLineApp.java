@@ -1024,7 +1024,7 @@ public class CommandLineApp
             }
         }
         if (planned.getStuckCount() > 0) {
-            text += " (not heavier for " + planned.getStuckCount() + " workouts)";
+            text += " (not heavier for " + planned.getStuckCount() + (planned.getStuckCount() == 1 ? " workout)" : " workouts)");
         }
         if (planned.getNote() != null && !planned.getNote().isEmpty()) {
             text += " (" + planned.getNote() + ")";
