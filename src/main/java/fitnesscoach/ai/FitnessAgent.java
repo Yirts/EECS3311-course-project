@@ -467,6 +467,83 @@ public class FitnessAgent
         return ideas;
     }
 
+    /**
+     * F11: a report on this week, Monday to Sunday. Code works out the numbers, and the AI writes a short review and up to
+     * 3 suggestions for next week, each written as a plan change that requestChange() from F03 can apply. With no AI the
+     * report only has the numbers (UC11 4a). The suggestions are remembered, so next week's report can look back at them.
+     */
+    public String writeWeeklyReport(UserProfile profile, WorkoutPlan plan) {
+        this.profile = profile; // for the calculator tool
+        LocalDate monday = LocalDate.now().with(DayOfWeek.MONDAY);
+        LocalDate sunday = monday.plusDays(6);
+        String report = "Weekly report for " + monday + " to " + sunday;
+        if (LocalDate.now().isBefore(sunday)) {
+            report += " (a partial week, up to today " + LocalDate.now() + ")"; // UC11 1a
+        }
+        String numbers = weekNumbers(plan, monday, sunday);
+        report += "\n\n" + numbers;
+
+        String nextWeek = "(there is no plan)\n";
+        if (plan != null) {
+            nextWeek = "";
+            for (WorkoutDay day : plan.getDays()) {
+                if (day.getDate().isAfter(sunday) && !day.getDate().isAfter(sunday.plusDays(7))) {
+                    nextWeek += describeDay(day);
+                }
+            }
+            if (nextWeek.isEmpty()) {
+                nextWeek = "(no workouts are planned next week)\n";
+            }
+        }
+        String about = "";
+        if (profile != null) {
+            about = describeProfile(profile);
+        }
+
+        String prompt = about + "This week's numbers:\n" + numbers + "\n"
+                + "The user's plan for next week:\n" + nextWeek + "\n"
+                + "Use the history tool to look at this week's workouts and check-ins. Compare them with the user's goal "
+                + "and with any earlier suggestions you remember. If there were no workouts this week, focus on getting back "
+                + "on track, for example with shorter workouts.\n"
+                + "Write a short review of the week and at most 3 suggestions for next week, in exactly this format:\n"
+                + "REVIEW: <3 to 5 sentences>\n"
+                + "SUGGESTION: <one change to next week's plan, written the way the user would ask for it, with the day or the exercise in it>\n"
+                + "Only suggest changes that would really help. If nothing needs to change, write no SUGGESTION lines.\n";
+
+        String reply = runAgentLoop(prompt);
+        if (reply == null) {
+            return report + "\nThe AI is offline, so this report only has the numbers.\n";
+        }
+
+        String review = "";
+        ArrayList<String> suggestions = new ArrayList<>();
+        for (String line : reply.split("\n")) {
+            line = cleanLine(line);
+            if (line.toUpperCase().startsWith("SUGGESTION:")) {
+                String suggestion = line.substring(11).trim();
+                if (suggestions.size() < 3 && !suggestion.isEmpty()) {
+                    suggestions.add(suggestion);
+                }
+            } else if (line.toUpperCase().startsWith("REVIEW:")) {
+                review += line.substring(7).trim() + " ";
+            } else if (!line.isEmpty() && !line.startsWith("TOOL")) {
+                review += line + " "; // the review can go on over more lines
+            }
+        }
+
+        report += "\nReview:\n" + review.trim() + "\n";
+        if (suggestions.isEmpty()) {
+            report += "\nNo changes are needed for next week.\n";
+        } else {
+            report += "\nSuggestions for next week:\n";
+            for (int i = 0; i < suggestions.size(); i++) {
+                report += (i + 1) + ". " + suggestions.get(i) + "\n";
+            }
+            remember("Suggestions on " + LocalDate.now() + ": " + String.join("; ", suggestions));
+        }
+        return report;
+    }
+
 
 	public List<String> getMemory()
 	{
@@ -1044,6 +1121,68 @@ public class FitnessAgent
         if (memory.size() > MAX_MEMORY) {
             memory.remove(0);
         }
+    }
+
+    // UC11 1: this week's numbers, worked out by code
+    private String weekNumbers(WorkoutPlan plan, LocalDate monday, LocalDate sunday) {
+        int workouts = 0;
+        int sets = 0;
+        double lifted = 0;
+        ArrayList<String> exercises = new ArrayList<>();
+        for (WorkoutLog log : history.getRecentWorkouts(7)) {
+            if (!log.getDate().isBefore(monday)) {
+                workouts++;
+                sets += log.getSets().size();
+                lifted += log.getWeightLifted();
+                for (SetLog set : log.getSets()) {
+                    if (!exercises.contains(set.getExerciseName())) {
+                        exercises.add(set.getExerciseName());
+                    }
+                }
+            }
+        }
+        int planned = 0;
+        if (plan != null) {
+            for (WorkoutDay day : plan.getDays()) {
+                if (!day.getDate().isBefore(monday) && !day.getDate().isAfter(sunday)) {
+                    planned++;
+                }
+            }
+        }
+        int checkIns = 0;
+        int scoreTotal = 0;
+        for (CheckIn checkIn : history.getRecentCheckIns(7)) {
+            if (!checkIn.getDate().isBefore(monday)) {
+                checkIns++;
+                scoreTotal += checkIn.calculateScore();
+            }
+        }
+
+        String text = "This week in numbers:\n"
+                + "- Workouts: " + workouts + " of " + planned + " planned\n"
+                + "- Sets: " + sets + ", with " + lifted + " kg lifted in total\n"
+                + "- Daily check-ins: " + checkIns;
+        if (checkIns > 0) {
+            text += ", with an average score of " + Math.round((double) scoreTotal / checkIns) + " out of 100";
+        }
+        text += "\n";
+
+        // a new record is this week's heaviest set beating every earlier week
+        for (String exercise : exercises) {
+            double before = 0;
+            double thisWeek = 0;
+            for (Map.Entry<LocalDate, Double> entry : history.getProgress(exercise).entrySet()) {
+                if (entry.getKey().isBefore(monday)) {
+                    before = Math.max(before, entry.getValue());
+                } else {
+                    thisWeek = Math.max(thisWeek, entry.getValue());
+                }
+            }
+            if (before > 0 && thisWeek > before) {
+                text += "- New record: " + exercise + " at " + thisWeek + " kg (the best before was " + before + " kg)\n";
+            }
+        }
+        return text;
     }
 
     // the plan from today to 6 days from now, in the same format the AI writes

@@ -36,6 +36,12 @@ A Java desktop app with a JavaFX GUI and a command-line interface (CLI). An AI a
 | `chat` | Talk to the AI coach about your own workouts and plan, or ask one question with `chat "How is my bench press going?"` (F09) |
 | `nutrition targets` | Your daily calorie, protein, carb and fat targets (F10) |
 | `nutrition meals` | Meal ideas from the AI that fit your targets and food preferences. Allergies are always checked (F10) |
+| `report weekly` | The AI's review of this week, with the numbers and up to 3 suggestions. You can apply each suggestion to your plan, and save the report in the `data` folder (F11) |
+| `import sample-data/workout-history.csv` | Imports past workouts from another app's CSV export. You see a preview, match any exercises the app doesn't know, and confirm (F12) |
+
+### Importing workouts
+
+`import` reads CSV files with one row per set. It finds the columns by their names: the date (`Date` or `start_time`), the exercise (`Exercise Name`, `exercise_title` or `Exercise`), `Reps`, the weight (`Weight`, `weight_kg`, or a column with "lb" in its name for pounds) and an optional `RPE`. Exports laid out like Strong's and Hevy's use these names. `sample-data/workout-history.csv` is a small example in pounds, with a few exercise names to match by hand and two broken rows.
 
 ## Run it with Maven
 

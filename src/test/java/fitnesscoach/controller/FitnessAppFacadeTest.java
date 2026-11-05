@@ -2,12 +2,15 @@ package fitnesscoach.controller;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -970,6 +973,170 @@ class FitnessAppFacadeTest {
         app.acceptMealIdea("Chicken rice bowl: chicken, rice, broccoli");
 
         assertTrue(savedData().loadMemory().get(0).contains("Chicken rice bowl"));
+    }
+
+    // ----- F11: generateWeeklyReport() and saveReport() -----
+
+    @Test
+    void generateWeeklyReportGivesTheReport() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel("REVIEW: Good week.\nSUGGESTION: only 30 minutes on friday"));
+
+        assertTrue(app.generateWeeklyReport().contains("1. only 30 minutes on friday"));
+    }
+
+    @Test
+    void generateWeeklyReportRemembersTheSuggestions() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel("REVIEW: Good week.\nSUGGESTION: only 30 minutes on friday"));
+
+        app.generateWeeklyReport();
+
+        assertTrue(savedData().loadMemory().get(0).startsWith("Suggestions on"));
+    }
+
+    @Test
+    void aSuggestionIsAppliedLikeAPlanChange() {
+        FitnessAppFacade app = makeAppWithPlan(new FakeModel("REVIEW: Good week.\nSUGGESTION: legs on mondays", MONDAY_BRIDGES));
+        app.generateWeeklyReport();
+
+        app.acceptPlan(app.requestChange("legs on mondays"));
+
+        assertEquals("Glute Bridge", exerciseOn(app.getCurrentPlan(), 0));
+    }
+
+    @Test
+    void saveReportWritesTheReportFile() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        app.saveReport("A good week.");
+
+        assertTrue(Files.exists(folder.resolve("report-" + LocalDate.now() + ".txt")));
+    }
+
+    // ----- F12: importWorkoutHistory(), getImportPreview() and confirmImport() -----
+
+    @Test
+    void importWorkoutHistoryOfAFileThatIsNotCsvThrows() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        assertThrows(IllegalArgumentException.class, () -> app.importWorkoutHistory("history.txt"));
+    }
+
+    @Test
+    void importWorkoutHistoryListsTheNamesItCanNotMatch() throws IOException {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        List<String> unmatched = app.importWorkoutHistory(writeCsv(TWO_WORKOUTS));
+
+        assertEquals(List.of("Cable Crossover"), unmatched);
+    }
+
+    @Test
+    void importWorkoutHistoryDoesNotSaveAnythingYet() throws IOException {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        app.importWorkoutHistory(writeCsv(TWO_WORKOUTS));
+
+        assertTrue(savedData().loadHistory().getLogs().isEmpty());
+    }
+
+    @Test
+    void getImportPreviewCountsTheWorkoutsAndSets() throws IOException {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+        app.importWorkoutHistory(writeCsv(TWO_WORKOUTS));
+
+        assertTrue(app.getImportPreview().contains("2 workouts with 3 sets, from 2026-10-01 to 2026-10-03."));
+    }
+
+    @Test
+    void confirmImportAddsTheWorkouts() throws IOException {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+        app.importWorkoutHistory(writeCsv(TWO_WORKOUTS));
+
+        app.confirmImport(Map.of());
+
+        assertEquals(2, savedData().loadHistory().getLogs().size());
+    }
+
+    @Test
+    void confirmImportUsesTheLibraryName() throws IOException {
+        // "Bench Press (Barbell)" is the library's "Barbell Bench Press"
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+        app.importWorkoutHistory(writeCsv(TWO_WORKOUTS));
+
+        app.confirmImport(Map.of());
+
+        assertEquals(60.0, app.getPersonalRecords().get("Barbell Bench Press"));
+    }
+
+    @Test
+    void confirmImportUsesTheUsersMatch() throws IOException {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+        app.importWorkoutHistory(writeCsv(TWO_WORKOUTS));
+
+        app.confirmImport(Map.of("Cable Crossover", "Cable Fly"));
+
+        assertEquals(15.0, app.getPersonalRecords().get("Cable Fly"));
+    }
+
+    @Test
+    void confirmImportLeavesOutSetsWithNoMatch() throws IOException {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+        app.importWorkoutHistory(writeCsv(TWO_WORKOUTS));
+
+        assertTrue(app.confirmImport(Map.of()).contains("Left out 1 set of exercises that are not in the library."));
+    }
+
+    @Test
+    void confirmImportSkipsWorkoutsThatAreAlreadyInTheHistory() throws IOException {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+        String csv = writeCsv(TWO_WORKOUTS);
+        app.importWorkoutHistory(csv);
+        app.confirmImport(Map.of());
+
+        app.importWorkoutHistory(csv);
+        app.confirmImport(Map.of());
+
+        assertEquals(2, savedData().loadHistory().getLogs().size());
+    }
+
+    @Test
+    void confirmImportRaisesALowerPlannedWeight() throws IOException {
+        // the plan has Dumbbell Row at 20 kg, and the latest imported workout averages 31 kg
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.importWorkoutHistory(writeCsv("Date,Exercise,Reps,Weight\n2026-10-20,Dumbbell Row,10,30\n2026-10-20,Dumbbell Row,8,32\n"));
+
+        app.confirmImport(Map.of());
+
+        assertEquals(31.0, rowOn(app, 1).getWeightKg());
+    }
+
+    @Test
+    void confirmImportKeepsAHigherPlannedWeight() throws IOException {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.importWorkoutHistory(writeCsv("Date,Exercise,Reps,Weight\n2026-10-20,Dumbbell Row,10,12\n"));
+
+        app.confirmImport(Map.of());
+
+        assertEquals(20.0, rowOn(app, 1).getWeightKg());
+    }
+
+    @Test
+    void confirmImportBeforeChoosingAFileThrows() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        assertThrows(IllegalStateException.class, () -> app.confirmImport(Map.of()));
+    }
+
+    private static final String TWO_WORKOUTS = "Date,Exercise Name,Set Order,Weight,Reps\n"
+            + "2026-10-01 18:00:00,Bench Press (Barbell),1,60,8\n"
+            + "2026-10-01 18:00:00,Cable Crossover,1,15,12\n"
+            + "2026-10-03 18:00:00,Lat Pulldown (Cable),1,45,10\n";
+
+    // writes a CSV file into the temp folder and returns its path
+    private String writeCsv(String text) throws IOException {
+        Path csv = folder.resolve("history.csv");
+        Files.writeString(csv, text);
+        return csv.toString();
     }
 
     private static final String THREE_MEALS = "Chicken rice bowl | chicken, rice, broccoli | 650 | 45\n"

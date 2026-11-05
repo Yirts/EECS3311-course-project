@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Stack;
+import java.util.TreeMap;
 
 import fitnesscoach.ai.AIModel;
 import fitnesscoach.ai.ClaudeAdapter;
@@ -46,6 +47,7 @@ public class FitnessAppFacade {
     private WeightProgression progression;
     private DataStore dataStore;
     private String swapReason; // from findSwapOptions(), so swapExercise() knows if the reason was pain
+    private List<WorkoutLog> pendingImport; // read by importWorkoutHistory(), waiting for confirmImport()
 
     /** Starts the app with the data saved in dataFolder and the AI settings from the .env file. */
     public FitnessAppFacade(String dataFolder, String envFile) {
@@ -422,6 +424,119 @@ public class FitnessAppFacade {
         dataStore.saveMemory(agent.getMemory());
     }
 
+    /**
+     * F11: the agent's report on this week, with the numbers, a review and suggestions for next week.
+     * Applying a suggestion is requestChange(suggestion), as in F03. The report is only saved by saveReport().
+     */
+    public String generateWeeklyReport() {
+        String report = agent.writeWeeklyReport(profile, currentPlan);
+        dataStore.saveMemory(agent.getMemory()); // the suggestions are remembered for next week
+        return report;
+    }
+
+    /** F11: saves the report as report-(date).txt in the data folder. */
+    public void saveReport(String report) {
+        dataStore.saveReport(report);
+    }
+
+    /**
+     * F12: reads a CSV file of past workouts and matches each exercise name to the library. Returns the names that
+     * could not be matched, so the user can match them by hand. Nothing is saved until confirmImport() (UC12 5a).
+     */
+    public List<String> importWorkoutHistory(String filePath) {
+        if (!filePath.toLowerCase().endsWith(".csv")) {
+            // UC12 2a
+            throw new IllegalArgumentException("Only .csv files can be imported. Workout apps like Strong and Hevy can export one.");
+        }
+
+        pendingImport = dataStore.readCsv(filePath);
+        ArrayList<String> unmatched = new ArrayList<>();
+        for (WorkoutLog log : pendingImport) {
+            for (SetLog set : log.getSets()) {
+                if (matchExercise(set.getExerciseName()) == null && !unmatched.contains(set.getExerciseName())) {
+                    unmatched.add(set.getExerciseName());
+                }
+            }
+        }
+        return unmatched;
+    }
+
+    /** F12: the preview of the file: the app it came from, the units, how many workouts and sets, and any skipped rows. */
+    public List<String> getImportPreview() {
+        ArrayList<String> preview = new ArrayList<>(dataStore.getImportNotes());
+        if (pendingImport != null && !pendingImport.isEmpty()) {
+            int sets = 0;
+            for (WorkoutLog log : pendingImport) {
+                sets += log.getSets().size();
+            }
+            preview.add(plural(pendingImport.size(), "workout") + " with " + plural(sets, "set") + ", from "
+                    + pendingImport.get(0).getDate() + " to " + pendingImport.get(pendingImport.size() - 1).getDate() + ".");
+        }
+        return preview;
+    }
+
+    /**
+     * F12: adds the workouts read by importWorkoutHistory() to the history. matches gives the library exercise for each
+     * name the user matched by hand; sets of names with no match are left out. Workouts that are already in the history
+     * are skipped (UC12 6a). Each new workout tells the observers (Observer pattern). Returns a summary.
+     */
+    public String confirmImport(Map<String, String> matches) {
+        if (pendingImport == null) {
+            throw new IllegalStateException("Choose a file to import first.");
+        }
+
+        ArrayList<WorkoutLog> added = new ArrayList<>();
+        int leftOut = 0;
+        int duplicates = 0;
+        for (WorkoutLog log : pendingImport) {
+            WorkoutLog matched = new WorkoutLog(log.getDate(), null); // imported workouts are not planned days
+            for (SetLog set : log.getSets()) {
+                Exercise exercise = matchExercise(set.getExerciseName());
+                if (exercise == null && matches.get(set.getExerciseName()) != null) {
+                    exercise = ExerciseLibrary.getInstance().findExercise(matches.get(set.getExerciseName()));
+                }
+                if (exercise == null) {
+                    leftOut++;
+                } else {
+                    matched.addSet(new SetLog(exercise.getName(), set.getReps(), set.getWeightKg(), set.getDifficulty()));
+                }
+            }
+
+            if (matched.getSets().isEmpty()) {
+                continue;
+            }
+            if (isAlreadyInHistory(matched)) {
+                duplicates++;
+            } else {
+                history.addWorkout(matched); // calls notifyObservers()
+                added.add(matched);
+            }
+        }
+
+        List<String> raised = useImportedWeights(added);
+        dataStore.saveHistory(history);
+        if (currentPlan != null) {
+            dataStore.savePlan(currentPlan);
+        }
+        pendingImport = null;
+
+        int sets = 0;
+        for (WorkoutLog log : added) {
+            sets += log.getSets().size();
+        }
+        String summary = "Imported " + plural(added.size(), "workout") + " with " + plural(sets, "set") + ".";
+        if (leftOut > 0) {
+            summary += "\nLeft out " + plural(leftOut, "set") + " of exercises that are not in the library.";
+        }
+        if (duplicates > 0) {
+            summary += "\nSkipped " + plural(duplicates, "workout") + " that you already had in your history.";
+        }
+        if (!raised.isEmpty()) {
+            summary += "\nYour plan now starts from your imported weights: " + String.join(", ", raised) + ".";
+        }
+        return summary;
+    }
+
     public UserProfile getProfile() {
         return profile;
     }
@@ -610,6 +725,91 @@ public class FitnessAppFacade {
                 }
             }
         }
+    }
+
+    // F12: finds the library exercise for a name from another app, like "Barbell Bench Press",
+    // "Bench Press (Barbell)" (becomes Barbell Bench Press) or "Lat Pulldown (Cable)" (becomes Lat Pulldown)
+    private Exercise matchExercise(String name) {
+        ExerciseLibrary library = ExerciseLibrary.getInstance();
+        Exercise exercise = library.findExercise(name.trim());
+        if (exercise == null && name.contains("(") && name.contains(")")) {
+            String main = name.substring(0, name.indexOf("(")).trim();
+            String kind = name.substring(name.indexOf("(") + 1, name.indexOf(")")).trim();
+            exercise = library.findExercise(kind + " " + main);
+            if (exercise == null) {
+                exercise = library.findExercise(main);
+            }
+        }
+        return exercise;
+    }
+
+    // UC12 6a: a workout on the same date with the same sets is already in the history
+    private boolean isAlreadyInHistory(WorkoutLog log) {
+        for (WorkoutLog old : history.getLogs()) {
+            if (old.getDate().equals(log.getDate()) && describeSets(old).equals(describeSets(log))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private String describeSets(WorkoutLog log) {
+        String text = "";
+        for (SetLog set : log.getSets()) {
+            text += set.getExerciseName() + " " + set.getReps() + " " + set.getWeightKg() + ";";
+        }
+        return text;
+    }
+
+    // UC12 7: imported workouts are not planned days, so WeightProgression leaves them alone. Instead, a planned weight
+    // that is lower than the user's latest imported working weight (the average of its sets) is raised to it
+    private List<String> useImportedWeights(List<WorkoutLog> imported) {
+        ArrayList<String> raised = new ArrayList<>();
+        if (currentPlan == null) {
+            return raised;
+        }
+
+        TreeMap<String, Double> latest = new TreeMap<>();
+        for (WorkoutLog log : imported) { // in date order, so a later workout replaces an earlier one
+            TreeMap<String, Double> totals = new TreeMap<>();
+            TreeMap<String, Integer> counts = new TreeMap<>();
+            for (SetLog set : log.getSets()) {
+                if (set.getWeightKg() > 0) {
+                    totals.put(set.getExerciseName(), totals.getOrDefault(set.getExerciseName(), 0.0) + set.getWeightKg());
+                    counts.put(set.getExerciseName(), counts.getOrDefault(set.getExerciseName(), 0) + 1);
+                }
+            }
+            for (String name : totals.keySet()) {
+                double average = totals.get(name) / counts.get(name);
+                latest.put(name, Math.round(average * 2) / 2.0); // to the nearest 0.5 kg
+            }
+        }
+
+        for (String name : latest.keySet()) {
+            boolean changed = false;
+            for (WorkoutDay day : currentPlan.getDays()) {
+                if (!day.getDate().isBefore(LocalDate.now())) {
+                    for (PlannedExercise planned : day.getExercises()) {
+                        if (planned.getExercise().getName().equalsIgnoreCase(name) && planned.getWeightKg() < latest.get(name)) {
+                            planned.setWeightKg(latest.get(name));
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if (changed) {
+                raised.add(name + " " + latest.get(name) + " kg");
+            }
+        }
+        return raised;
+    }
+
+    // like "1 set" or "3 sets"
+    private String plural(int count, String word) {
+        if (count == 1) {
+            return count + " " + word;
+        }
+        return count + " " + word + "s";
     }
 
     private boolean isAboutPain(String reason) {

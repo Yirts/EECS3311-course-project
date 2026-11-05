@@ -280,6 +280,109 @@ class DataStoreTester
         assertSame(ExerciseLibrary.getInstance().findExercise("Barbell Squat"), loaded.getExercise());
     }
 
+    // ----- readCsv() (F12) -----
+
+    @Test
+    void readCsvMakesOneWorkoutForEachDate() throws IOException {
+        DataStore store = new DataStore(folder.toString());
+        Path csv = writeCsv("Date,Exercise,Reps,Weight\n2026-10-01,Push Up,10,0\n2026-10-01,Push Up,8,0\n2026-10-03,Plank,1,0\n");
+
+        assertEquals(2, store.readCsv(csv.toString()).size());
+    }
+
+    @Test
+    void readCsvKeepsTheSetsOfEachWorkout() throws IOException {
+        DataStore store = new DataStore(folder.toString());
+        Path csv = writeCsv("Date,Exercise,Reps,Weight\n2026-10-01,Push Up,10,0\n2026-10-01,Push Up,8,0\n2026-10-03,Plank,1,0\n");
+
+        assertEquals(2, store.readCsv(csv.toString()).get(0).getSets().size());
+    }
+
+    @Test
+    void readCsvFindsTheColumnsByTheirNames() throws IOException {
+        DataStore store = new DataStore(folder.toString());
+        Path csv = writeCsv("RPE,Reps,Exercise Name,Weight,Date\n8,5,Barbell Squat,100,2026-10-01\n");
+
+        SetLog set = store.readCsv(csv.toString()).get(0).getSets().get(0);
+
+        assertEquals("Barbell Squat 5 100.0 8", set.getExerciseName() + " " + set.getReps() + " " + set.getWeightKg() + " " + set.getDifficulty());
+    }
+
+    @Test
+    void readCsvChangesPoundsToKilograms() throws IOException {
+        DataStore store = new DataStore(folder.toString());
+        Path csv = writeCsv("Date,Exercise,Reps,Weight (lbs)\n2026-10-01,Barbell Squat,5,100\n");
+
+        assertEquals(45.4, store.readCsv(csv.toString()).get(0).getSets().get(0).getWeightKg());
+    }
+
+    @Test
+    void readCsvReadsQuotedCellsAndDatesWithMonthNames() throws IOException {
+        DataStore store = new DataStore(folder.toString());
+        Path csv = writeCsv("\"title\",\"start_time\",\"exercise_title\",\"weight_kg\",\"reps\"\n"
+                + "\"Push, Pull\",\"21 Oct 2026, 18:30\",\"Dumbbell Row\",\"20\",\"10\"\n");
+
+        assertEquals(LocalDate.of(2026, 10, 21), store.readCsv(csv.toString()).get(0).getDate());
+    }
+
+    @Test
+    void readCsvUsesSevenWhenThereIsNoDifficulty() throws IOException {
+        DataStore store = new DataStore(folder.toString());
+        Path csv = writeCsv("Date,Exercise,Reps,Weight\n2026-10-01,Push Up,10,0\n");
+
+        assertEquals(7, store.readCsv(csv.toString()).get(0).getSets().get(0).getDifficulty());
+    }
+
+    @Test
+    void readCsvSkipsARowWithNoDate() throws IOException {
+        DataStore store = new DataStore(folder.toString());
+        Path csv = writeCsv("Date,Exercise,Reps,Weight\n2026-10-01,Push Up,10,0\n,Push Up,8,0\n");
+
+        store.readCsv(csv.toString());
+
+        assertTrue(store.getImportNotes().contains("Line 3 was skipped: there is no date."));
+    }
+
+    @Test
+    void readCsvSkipsARowWithANumberItCanNotRead() throws IOException {
+        DataStore store = new DataStore(folder.toString());
+        Path csv = writeCsv("Date,Exercise,Reps,Weight\n2026-10-01,Push Up,ten,0\n");
+
+        assertTrue(store.readCsv(csv.toString()).isEmpty());
+    }
+
+    @Test
+    void readCsvSaysWhichAppTheFileCameFrom() throws IOException {
+        DataStore store = new DataStore(folder.toString());
+        Path csv = writeCsv("Date,Workout Name,Exercise Name,Set Order,Weight,Reps\n2026-10-01 18:00:00,Upper,Push Up,1,0,10\n");
+
+        store.readCsv(csv.toString());
+
+        assertEquals("This looks like a Strong export.", store.getImportNotes().get(0));
+    }
+
+    @Test
+    void readCsvWithoutTheNeededColumnsThrows() throws IOException {
+        DataStore store = new DataStore(folder.toString());
+        Path csv = writeCsv("Name,Value\nA,1\n");
+
+        assertThrows(IllegalArgumentException.class, () -> store.readCsv(csv.toString()));
+    }
+
+    @Test
+    void readCsvOfAMissingFileThrows() {
+        DataStore store = new DataStore(folder.toString());
+
+        assertThrows(IllegalArgumentException.class, () -> store.readCsv(folder.resolve("missing.csv").toString()));
+    }
+
+    // writes a CSV file into the temp folder
+    private Path writeCsv(String text) throws IOException {
+        Path csv = folder.resolve("history.csv");
+        Files.writeString(csv, text);
+        return csv;
+    }
+
 
 	private WorkoutPlan makePlan()
 	{

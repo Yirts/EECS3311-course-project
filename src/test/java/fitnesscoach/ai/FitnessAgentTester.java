@@ -887,6 +887,102 @@ class FitnessAgentTester
         assertEquals(List.of("allergy: peanuts", "allergy: shellfish"), boundaries);
     }
 
+    // ----- F11: writeWeeklyReport() -----
+
+    @Test
+    void writeWeeklyReportHasTheWeeksNumbers() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(REPORT), null, historyWithRowsToday());
+        WorkoutPlan plan = new WorkoutPlan(LocalDate.now());
+        plan.getDays().add(todaysRows());
+
+        String report = agent.writeWeeklyReport(newProfile(), plan);
+
+        assertTrue(report.contains("- Workouts: 1 of 1 planned"));
+    }
+
+    @Test
+    void writeWeeklyReportHasTheReview() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(REPORT), null, historyWithRowsToday());
+
+        String report = agent.writeWeeklyReport(newProfile(), null);
+
+        assertTrue(report.contains("Review:\nA solid week, you did every row."));
+    }
+
+    @Test
+    void writeWeeklyReportNumbersTheSuggestions() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(REPORT), null, historyWithRowsToday());
+
+        String report = agent.writeWeeklyReport(newProfile(), null);
+
+        assertTrue(report.contains("1. only 30 minutes on friday"));
+    }
+
+    @Test
+    void writeWeeklyReportRemembersTheSuggestions() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(REPORT), null, historyWithRowsToday());
+
+        agent.writeWeeklyReport(newProfile(), null);
+
+        assertTrue(agent.getMemory().get(0).startsWith("Suggestions on " + LocalDate.now()));
+    }
+
+    @Test
+    void writeWeeklyReportSaysWhenTheWeekIsNotOver() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(REPORT), null, historyWithRowsToday());
+
+        String report = agent.writeWeeklyReport(newProfile(), null);
+
+        boolean beforeSunday = LocalDate.now().getDayOfWeek() != DayOfWeek.SUNDAY;
+        assertEquals(beforeSunday, report.contains("a partial week"));
+    }
+
+    @Test
+    void writeWeeklyReportFindsANewRecord() {
+        WorkoutHistory history = historyWithRowsToday(); // 22.5 kg today
+        WorkoutLog older = new WorkoutLog(LocalDate.now().minusDays(10), null); // always before this week's monday
+        older.addSet(new SetLog("Dumbbell Row", 10, 20, 7));
+        history.addWorkout(older);
+        FitnessAgent agent = new FitnessAgent(new FakeModel(REPORT), null, history);
+
+        String report = agent.writeWeeklyReport(newProfile(), null);
+
+        assertTrue(report.contains("- New record: Dumbbell Row at 22.5 kg (the best before was 20.0 kg)"));
+    }
+
+    @Test
+    void writeWeeklyReportUsesAnAnswerWithNoReviewLine() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel("You had a good week."), null, historyWithRowsToday());
+
+        String report = agent.writeWeeklyReport(newProfile(), null);
+
+        assertTrue(report.contains("Review:\nYou had a good week.\n\nNo changes are needed for next week."));
+    }
+
+    @Test
+    void writeWeeklyReportWithoutAiOnlyHasTheNumbers() {
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, historyWithRowsToday());
+
+        String report = agent.writeWeeklyReport(newProfile(), null);
+
+        assertTrue(report.contains("only has the numbers"));
+    }
+
+    private static final String REPORT = "REVIEW: A solid week, you did every row.\nSUGGESTION: only 30 minutes on friday";
+
+    // a history with 3 sets of Dumbbell Row at 22.5 kg today
+    private WorkoutHistory historyWithRowsToday() {
+        WorkoutHistory history = new WorkoutHistory();
+        WorkoutLog log = new WorkoutLog(LocalDate.now(), null);
+        for (int i = 0; i < 3; i++) {
+            log.addSet(new SetLog("Dumbbell Row", 10, 22.5, 7));
+        }
+        history.addWorkout(log);
+        return history;
+    }
+
     private static final String MONDAY_PUSH_UPS = "DAY monday: Upper body\nPush Up | 3 | 10 | 0";
     private static final String THREE_MEALS = "Chicken rice bowl | chicken, rice, broccoli | 650 | 45\n"
             + "Greek yogurt bowl | greek yogurt, berries, oats | 450 | 30\n"

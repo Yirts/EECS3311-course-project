@@ -3,6 +3,7 @@ package fitnesscoach.ui;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
@@ -84,6 +85,10 @@ public class CommandLineApp
             showTargets();
         } else if (command.equals("nutrition meals")) {
             showMealIdeas();
+        } else if (command.equals("report weekly")) {
+            weeklyReport();
+        } else if (command.startsWith("import")) {
+            importHistory(command.substring("import".length()));
         } else {
             System.out.println("Unknown command: " + command);
             System.out.println("Type \"fitagent help\" to see the commands.");
@@ -112,6 +117,8 @@ public class CommandLineApp
         printCommand("chat", "talk to the AI coach (or: chat \"your question\")");
         printCommand("nutrition targets", "your daily calorie and macro targets");
         printCommand("nutrition meals", "meal ideas that fit your targets and allergies");
+        printCommand("report weekly", "the AI's review of your week, with suggestions you can apply");
+        printCommand("import sample-data/workout-history.csv", "import past workouts from another app's CSV file");
     }
 
     private void printCommand(String command, String meaning) {
@@ -863,6 +870,121 @@ public class CommandLineApp
                 return;
             }
         }
+    }
+
+    // F11: fitagent report weekly
+    private void weeklyReport() {
+        System.out.println("The AI is writing your weekly report...");
+        String report;
+        try {
+            report = app.generateWeeklyReport();
+        } catch (RuntimeException error) {
+            System.out.println(error.getMessage());
+            return;
+        }
+        System.out.println();
+        System.out.print(report);
+
+        // each suggestion can be applied to the plan the same way as "fitagent plan change" (F03)
+        ArrayList<String> suggestions = new ArrayList<>();
+        boolean inSuggestions = false;
+        for (String line : report.split("\n")) {
+            if (line.startsWith("Suggestions for next week:")) {
+                inSuggestions = true;
+            } else if (inSuggestions && line.matches("\\d+\\. .*")) {
+                suggestions.add(line.substring(line.indexOf(". ") + 2));
+            }
+        }
+        for (String suggestion : suggestions) {
+            if (app.getCurrentPlan() == null) {
+                break;
+            }
+            System.out.print("\nApply \"" + suggestion + "\" to your plan? (y/n): ");
+            if (!input.nextLine().trim().toLowerCase().startsWith("y")) {
+                continue; // UC11 6a: Deny
+            }
+
+            System.out.println("The AI is changing your plan...");
+            WorkoutPlan newPlan;
+            try {
+                newPlan = app.requestChange(suggestion);
+            } catch (RuntimeException error) {
+                System.out.println(error.getMessage());
+                continue;
+            }
+            if (newPlan == null) {
+                System.out.println("The AI is offline, so the suggestions can't be applied right now.");
+                break;
+            }
+            if (showChanges(app.getCurrentPlan(), newPlan) == 0) {
+                app.undoChange();
+                System.out.println("The AI did not find anything to change for this one.");
+                continue;
+            }
+            System.out.print("Confirm this change? (y/n): ");
+            if (input.nextLine().trim().toLowerCase().startsWith("y")) {
+                app.acceptPlan(newPlan);
+                System.out.println("Your plan is changed.");
+            } else {
+                app.undoChange();
+                System.out.println("Your plan was not changed.");
+            }
+        }
+
+        System.out.print("\nSave this report? (y/n): ");
+        if (input.nextLine().trim().toLowerCase().startsWith("y")) {
+            app.saveReport(report);
+            System.out.println("Saved as data/report-" + LocalDate.now() + ".txt");
+        } else {
+            System.out.println("The report was not saved."); // UC11 7a
+        }
+    }
+
+    // F12: fitagent import history.csv
+    private void importHistory(String filePath) {
+        filePath = filePath.replace("\"", "").trim();
+        if (filePath.isEmpty()) {
+            System.out.println("Type the file after the command, for example: fitagent import sample-data/workout-history.csv");
+            return;
+        }
+
+        System.out.println("Reading " + filePath + "...");
+        List<String> unmatched;
+        try {
+            unmatched = app.importWorkoutHistory(filePath);
+        } catch (RuntimeException error) {
+            System.out.println(error.getMessage());
+            return;
+        }
+        for (String line : app.getImportPreview()) {
+            System.out.println(line);
+        }
+
+        HashMap<String, String> matches = new HashMap<>();
+        if (!unmatched.isEmpty()) {
+            System.out.println();
+            System.out.println("These exercises are not in the library. For each one, type the library exercise it is");
+            System.out.println("(like \"Cable Fly\"), or press Enter to leave it out:");
+            for (String name : unmatched) {
+                System.out.print("  " + name + " = ");
+                String answer = input.nextLine().trim();
+                if (answer.isEmpty()) {
+                    continue;
+                }
+                if (ExerciseLibrary.getInstance().findExercise(answer) == null) {
+                    System.out.println("    " + answer + " is not in the library, so " + name + " is left out.");
+                } else {
+                    matches.put(name, answer);
+                }
+            }
+        }
+
+        System.out.print("Import these workouts? (y/n): ");
+        if (!input.nextLine().trim().toLowerCase().startsWith("y")) {
+            System.out.println("Nothing was imported."); // UC12 5a
+            return;
+        }
+        System.out.println(app.confirmImport(matches));
     }
 
     // F06: prints the next planned copy of each exercise from the date on, next to the last weight lifted, and returns them
