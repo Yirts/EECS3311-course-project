@@ -217,6 +217,65 @@ class WorkoutHistoryTester
 
 		assertEquals(0, progress.size(), "Failed Test 3 getProgress");
 	}
+
+
+    // ----- getMuscleSets() and getPersonalRecords() (F08) -----
+
+    @Test
+    void getMuscleSetsCountsTheMainMuscleOfEachSet() {
+        WorkoutHistory history = new WorkoutHistory();
+        WorkoutLog log = new WorkoutLog(LocalDate.now(), null);
+        log.addSet(new SetLog("Dumbbell Bench Press", 10, 15, 7));
+        log.addSet(new SetLog("Dumbbell Bench Press", 10, 15, 8));
+        log.addSet(new SetLog("Dumbbell Row", 10, 20, 7));
+        history.addWorkout(log);
+
+        Map<String, Integer> sets = history.getMuscleSets(7);
+
+        assertEquals(2, sets.get("chest"));
+        assertEquals(1, sets.get("back"));
+    }
+
+    @Test
+    void getMuscleSetsShowsMusclesThatWereNotTrained() {
+        WorkoutHistory history = new WorkoutHistory();
+
+        assertEquals(0, history.getMuscleSets(7).get("quads"));
+    }
+
+    @Test
+    void getMuscleSetsOnlyCountsTheDaysAskedFor() {
+        WorkoutHistory history = new WorkoutHistory();
+        WorkoutLog oldLog = new WorkoutLog(LocalDate.now().minusDays(20), null);
+        oldLog.addSet(new SetLog("Dumbbell Bench Press", 10, 15, 7));
+        history.addWorkout(oldLog);
+
+        assertEquals(0, history.getMuscleSets(14).get("chest"));
+    }
+
+    @Test
+    void getPersonalRecordsKeepsTheHeaviestWeight() {
+        WorkoutHistory history = new WorkoutHistory();
+        WorkoutLog first = new WorkoutLog(LocalDate.now().minusDays(7), null);
+        first.addSet(new SetLog("Bench Press", 8, 60, 7));
+        WorkoutLog second = new WorkoutLog(LocalDate.now(), null);
+        second.addSet(new SetLog("Bench Press", 5, 70, 9));
+        second.addSet(new SetLog("Bench Press", 8, 65, 8));
+        history.addWorkout(first);
+        history.addWorkout(second);
+
+        assertEquals(70.0, history.getPersonalRecords().get("Bench Press"));
+    }
+
+    @Test
+    void getPersonalRecordsLeavesOutBodyweightSets() {
+        WorkoutHistory history = new WorkoutHistory();
+        WorkoutLog log = new WorkoutLog(LocalDate.now(), null);
+        log.addSet(new SetLog("Push Up", 15, 0, 6));
+        history.addWorkout(log);
+
+        assertTrue(history.getPersonalRecords().isEmpty());
+    }
 }
 
 class CountingObserver implements WorkoutObserver

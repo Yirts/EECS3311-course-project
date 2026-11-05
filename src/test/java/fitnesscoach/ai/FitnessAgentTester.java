@@ -752,7 +752,145 @@ class FitnessAgentTester
         assertNull(agent.analyzeStuckExercise(stuckRow(), newProfile()));
     }
 
+    // ----- F09: answerQuestion() with the profile and the plan, and the calculator tool -----
+
+    @Test
+    void answerQuestionPutsTheProfileInThePrompt() {
+        FakeModel claude = new FakeModel("Keep going!");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        agent.answerQuestion("What is my goal?", profileWith("goal: build muscle"), null);
+
+        assertTrue(claude.prompts.get(0).contains("Goal: build muscle"));
+    }
+
+    @Test
+    void answerQuestionPutsThisWeeksPlanInThePrompt() {
+        FakeModel claude = new FakeModel("Rows are good for your back.");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+        WorkoutPlan plan = new WorkoutPlan(LocalDate.now());
+        plan.getDays().add(todaysRows());
+
+        agent.answerQuestion("Why am I doing rows?", newProfile(), plan);
+
+        assertTrue(claude.prompts.get(0).contains("Dumbbell Row | 3 | 10 | 20.0"));
+    }
+
+    @Test
+    void answerQuestionHidesAToolRequestLeftInTheFinalAnswer() {
+        // after 6 tools the model must answer, but a small model can still start its answer with a tool request
+        FakeModel llama = new FakeModel("TOOL history: 7", "TOOL history: 7", "TOOL history: 7", "TOOL history: 7", "TOOL history: 7",
+                "TOOL history: 7", "TOOL history: 7\nYou did great this week.");
+        FitnessAgent agent = new FitnessAgent(llama, null, new WorkoutHistory());
+
+        assertEquals("You did great this week.", agent.answerQuestion("How was my week?"));
+    }
+
+    @Test
+    void calculatorToolGivesTheDailyTargets() {
+        FakeModel claude = new FakeModel("TOOL calculator: targets", "Aim for about 144 g of protein.");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        agent.answerQuestion("How much protein should I eat?", newProfile(), null);
+
+        assertTrue(claude.prompts.get(1).contains("Daily targets:"));
+    }
+
+    @Test
+    void calculatorToolAddsNumbers() {
+        FakeModel claude = new FakeModel("TOOL calculator: 450 + 620 + 380", "That is 1450 calories.");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        agent.answerQuestion("How many calories did I eat?", newProfile(), null);
+
+        assertTrue(claude.prompts.get(1).contains("= 1450.0"));
+    }
+
+    // ----- F10: createMealIdeas() -----
+
+    @Test
+    void createMealIdeasReadsTheIdeas() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(THREE_MEALS), null, new WorkoutHistory());
+
+        List<String> ideas = agent.createMealIdeas(newProfile(), "likes: chicken");
+
+        assertEquals("Chicken rice bowl: chicken, rice, broccoli (about 650 calories, 45 g protein)", ideas.get(0));
+    }
+
+    @Test
+    void createMealIdeasGivesThreeIdeas() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(THREE_MEALS), null, new WorkoutHistory());
+
+        assertEquals(3, agent.createMealIdeas(newProfile(), "likes: chicken").size());
+    }
+
+    @Test
+    void createMealIdeasReplacesAnIdeaWithAnAllergy() {
+        FakeModel claude = new FakeModel("Peanut noodles | noodles, peanut butter | 600 | 25\n"
+                + "Chicken rice bowl | chicken, rice, broccoli | 650 | 45\n"
+                + "Greek yogurt bowl | greek yogurt, berries, oats | 450 | 30",
+                "Turkey wrap | turkey, tortilla, lettuce | 550 | 40");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        List<String> ideas = agent.createMealIdeas(profileWith("allergy: peanuts"), "likes: chicken");
+
+        assertFalse(ideas.toString().toLowerCase().contains("peanut"));
+        assertTrue(ideas.get(2).startsWith("Turkey wrap"));
+    }
+
+    @Test
+    void createMealIdeasChecksTheFoodsThatBelongToAnAllergy() {
+        // shrimp is a shellfish, so the shrimp idea is removed even though the word "shellfish" is not in it
+        FakeModel claude = new FakeModel("Shrimp tacos | shrimp, corn tortilla, salsa | 600 | 35",
+                "Chicken rice bowl | chicken, rice, broccoli | 650 | 45");
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        List<String> ideas = agent.createMealIdeas(profileWith("allergy: shellfish"), "");
+
+        assertEquals(List.of("Chicken rice bowl: chicken, rice, broccoli (about 650 calories, 45 g protein)"), ideas);
+    }
+
+    @Test
+    void createMealIdeasNeverReturnsAnAllergyEvenWhenTheAiKeepsUsingIt() {
+        String peanutMeal = "Peanut noodles | noodles, peanut butter | 600 | 25";
+        FitnessAgent agent = new FitnessAgent(new FakeModel(peanutMeal, peanutMeal), null, new WorkoutHistory());
+
+        List<String> ideas = agent.createMealIdeas(profileWith("allergy: peanuts"), "");
+
+        assertTrue(ideas.isEmpty());
+    }
+
+    @Test
+    void createMealIdeasRemembersThePreferences() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel(THREE_MEALS), null, new WorkoutHistory());
+
+        agent.createMealIdeas(newProfile(), "likes: chicken\ndislikes: mushrooms");
+
+        assertTrue(agent.getMemory().contains("Food preferences: likes: chicken; dislikes: mushrooms"));
+    }
+
+    @Test
+    void createMealIdeasReturnsNullWhenNoModelCanBeReached() {
+        FakeModel claude = new FakeModel();
+        claude.available = false;
+        FitnessAgent agent = new FitnessAgent(claude, null, new WorkoutHistory());
+
+        assertNull(agent.createMealIdeas(newProfile(), "likes: chicken"));
+    }
+
+    @Test
+    void readBoundariesSplitsAnAllergyListIntoOneBoundaryEach() {
+        FitnessAgent agent = new FitnessAgent(new FakeModel("allergy: peanuts, shellfish"), null, new WorkoutHistory());
+
+        List<String> boundaries = agent.readBoundaries(newProfile(), "I am allergic to peanuts and shellfish");
+
+        assertEquals(List.of("allergy: peanuts", "allergy: shellfish"), boundaries);
+    }
+
     private static final String MONDAY_PUSH_UPS = "DAY monday: Upper body\nPush Up | 3 | 10 | 0";
+    private static final String THREE_MEALS = "Chicken rice bowl | chicken, rice, broccoli | 650 | 45\n"
+            + "Greek yogurt bowl | greek yogurt, berries, oats | 450 | 30\n"
+            + "Salmon and potatoes | salmon, potatoes, green beans | 700 | 42";
 
     // Dumbbell Row, 3 sets of 10 at 20 kg, today
     private WorkoutDay todaysRows() {

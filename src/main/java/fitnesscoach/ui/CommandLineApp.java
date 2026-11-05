@@ -76,6 +76,14 @@ public class CommandLineApp
             finishWorkout();
         } else if (command.equals("plan progress")) {
             showProgression();
+        } else if (command.startsWith("progress")) {
+            showDashboard(command);
+        } else if (command.startsWith("chat")) {
+            chat(command.substring("chat".length()));
+        } else if (command.equals("nutrition targets")) {
+            showTargets();
+        } else if (command.equals("nutrition meals")) {
+            showMealIdeas();
         } else {
             System.out.println("Unknown command: " + command);
             System.out.println("Type \"fitagent help\" to see the commands.");
@@ -100,6 +108,10 @@ public class CommandLineApp
         printCommand("workout skip", "skip the current exercise");
         printCommand("workout finish", "finish the workout and see your next weights");
         printCommand("plan progress", "see your next weights and change one");
+        printCommand("progress --exercise \"Bench Press\" --range 12w", "your progress dashboard (--bodyweight 78.5 adds a body weight)");
+        printCommand("chat", "talk to the AI coach (or: chat \"your question\")");
+        printCommand("nutrition targets", "your daily calorie and macro targets");
+        printCommand("nutrition meals", "meal ideas that fit your targets and allergies");
     }
 
     private void printCommand(String command, String meaning) {
@@ -607,6 +619,249 @@ public class CommandLineApp
             System.out.println("Saved. " + chosen.getExercise().getName() + " is now " + weightKg + " kg from then on, and the coach will remember it.");
         } catch (IllegalArgumentException error) {
             System.out.println(error.getMessage());
+        }
+    }
+
+    // F08: fitagent progress --exercise "Bench Press" --range 12w (and --bodyweight 78.5 to add today's body weight)
+    private void showDashboard(String command) {
+        String bodyWeight = readFlag(command, "--bodyweight");
+        if (bodyWeight != null) {
+            try {
+                app.addBodyWeight(Double.parseDouble(bodyWeight));
+                System.out.println("Saved today's body weight: " + bodyWeight + " kg.");
+            } catch (NumberFormatException error) {
+                System.out.println("--bodyweight must be a number, for example: fitagent progress --bodyweight 78.5");
+                return;
+            } catch (RuntimeException error) {
+                System.out.println(error.getMessage());
+                return;
+            }
+        }
+
+        int days = readRange(readFlag(command, "--range"));
+        LocalDate from = LocalDate.now().minusDays(days);
+        Map<String, Double> records = app.getPersonalRecords();
+        ArrayList<Map.Entry<String, Integer>> muscles = new ArrayList<>(app.getMuscleSets(days).entrySet());
+        muscles.sort((a, b) -> b.getValue() - a.getValue()); // most sets first
+        if (records.isEmpty() && muscles.get(0).getValue() == 0) {
+            // UC08 2a
+            System.out.println("No workouts yet. Log one with \"fitagent workout start\", or import your history with \"fitagent import <file>\".");
+        }
+
+        String exercise = readFlag(command, "--exercise");
+        if (exercise != null) {
+            if (ExerciseLibrary.getInstance().findExercise(exercise) != null) {
+                exercise = ExerciseLibrary.getInstance().findExercise(exercise).getName();
+            }
+            TreeMap<LocalDate, Double> points = new TreeMap<>();
+            for (Map.Entry<LocalDate, Double> entry : app.getProgress(exercise).entrySet()) {
+                if (entry.getKey().isAfter(from)) {
+                    points.put(entry.getKey(), entry.getValue());
+                }
+            }
+            System.out.println();
+            System.out.println(exercise + ", heaviest set of each workout in the last " + days + " days:");
+            if (points.size() < 2) {
+                System.out.println("  Not enough data yet."); // UC08 3a
+            }
+            drawChart(points, "kg");
+        }
+
+        System.out.println();
+        System.out.println("Sets for each muscle in the last " + days + " days:");
+        for (Map.Entry<String, Integer> muscle : muscles) {
+            System.out.println(String.format("  %-12s %s %d", muscle.getKey(), "#".repeat(muscle.getValue()), muscle.getValue()));
+        }
+        if (muscles.get(0).getValue() > 0) {
+            ArrayList<String> notTrained = new ArrayList<>();
+            for (Map.Entry<String, Integer> muscle : muscles) {
+                if (muscle.getValue() == 0) {
+                    notTrained.add(muscle.getKey());
+                }
+            }
+            System.out.println("Trained most: " + muscles.get(0).getKey() + ".");
+            if (notTrained.isEmpty()) {
+                System.out.println("Trained least: " + muscles.get(muscles.size() - 1).getKey() + ".");
+            } else {
+                System.out.println("Not trained at all: " + String.join(", ", notTrained) + ".");
+            }
+        }
+
+        System.out.println();
+        System.out.println("Personal records:");
+        if (records.isEmpty()) {
+            System.out.println("  (none yet)");
+        }
+        for (Map.Entry<String, Double> record : records.entrySet()) {
+            System.out.println("  " + record.getKey() + ": " + record.getValue() + " kg");
+        }
+
+        System.out.println();
+        System.out.println("Body weight in the last " + days + " days:");
+        TreeMap<LocalDate, Double> weights = new TreeMap<>();
+        if (app.getProfile() != null) {
+            for (Map.Entry<LocalDate, Double> entry : app.getProfile().getWeightHistory().entrySet()) {
+                if (entry.getKey().isAfter(from)) {
+                    weights.put(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+        if (weights.isEmpty()) {
+            System.out.println("  (none yet, add one with: fitagent progress --bodyweight 78.5)");
+        }
+        drawChart(weights, "kg");
+    }
+
+    // a text chart with one bar for each date. A value much bigger than the one before is flagged as a possible typo (UC08 3b)
+    private void drawChart(Map<LocalDate, Double> points, String unit) {
+        double max = 0;
+        for (double value : points.values()) {
+            max = Math.max(max, value);
+        }
+
+        Double previous = null;
+        for (Map.Entry<LocalDate, Double> point : points.entrySet()) {
+            int length = 1;
+            if (max > 0) {
+                length = Math.max(1, (int) Math.round(point.getValue() / max * 30));
+            }
+            String line = "  " + point.getKey() + "  " + "#".repeat(length) + " " + point.getValue() + " " + unit;
+            if (previous != null && point.getValue() > previous * 1.5 && point.getValue() - previous >= 20) {
+                line += "   <- much more than before, is this a typo?";
+            }
+            System.out.println(line);
+            previous = point.getValue();
+        }
+    }
+
+    // "12w" is 12 weeks, "30d" is 30 days and "6m" is 6 months. With no range the dashboard shows 12 weeks
+    private int readRange(String range) {
+        if (range == null || range.isEmpty()) {
+            return 84;
+        }
+        try {
+            int number = Integer.parseInt(range.substring(0, range.length() - 1));
+            char unit = Character.toLowerCase(range.charAt(range.length() - 1));
+            if (unit == 'd') {
+                return number;
+            } else if (unit == 'w') {
+                return number * 7;
+            } else if (unit == 'm') {
+                return number * 30;
+            }
+        } catch (NumberFormatException error) {
+            // not a range, so the default is used below
+        }
+        System.out.println("The range should look like 12w, 30d or 6m, so 12 weeks is shown.");
+        return 84;
+    }
+
+    // F09: fitagent chat, or fitagent chat "a question"
+    private void chat(String question) {
+        question = question.replace("\"", "").trim();
+        if (!question.isEmpty()) {
+            askCoach(question);
+            return;
+        }
+
+        System.out.println("Coach chat. Ask anything about your training, or press Enter to stop.");
+        while (true) {
+            System.out.print("You: ");
+            if (!input.hasNextLine()) {
+                return;
+            }
+            String line = input.nextLine().trim();
+            if (line.isEmpty()) {
+                return;
+            }
+            askCoach(line);
+        }
+    }
+
+    private void askCoach(String question) {
+        System.out.println("The coach is thinking...");
+        try {
+            System.out.println("Coach: " + app.askCoach(question));
+        } catch (RuntimeException error) {
+            System.out.println(error.getMessage());
+        }
+        System.out.println();
+    }
+
+    // F10: fitagent nutrition targets
+    private void showTargets() {
+        Map<String, Integer> targets;
+        try {
+            targets = app.calculateTargets();
+        } catch (RuntimeException error) {
+            System.out.println(error.getMessage() + " Run \"fitagent profile setup\".");
+            return;
+        }
+
+        System.out.println("Your daily targets:");
+        System.out.println("  Calories: " + targets.get("calories"));
+        if (targets.get("calories") <= 1200) {
+            System.out.println("  (your goal would go lower, so this is raised to 1200, the safe minimum)"); // UC10 2b
+        }
+        System.out.println("  Protein:  " + targets.get("protein") + " g");
+        System.out.println("  Carbs:    " + targets.get("carbs") + " g");
+        System.out.println("  Fat:      " + targets.get("fat") + " g");
+    }
+
+    // F10: fitagent nutrition meals
+    private void showMealIdeas() {
+        showTargets();
+        if (app.getProfile() == null) {
+            return;
+        }
+
+        System.out.println();
+        System.out.print("Foods you like: ");
+        String likes = input.nextLine().trim();
+        System.out.print("Foods you don't like: ");
+        String dislikes = input.nextLine().trim();
+        System.out.print("Allergies, separated by commas (press Enter for none): ");
+        String allergies = input.nextLine().trim();
+        String preferences = "likes: " + likes + "\ndislikes: " + dislikes;
+        if (!allergies.isEmpty()) {
+            preferences += "\nallergies: " + allergies;
+        }
+
+        while (true) {
+            System.out.println("The AI is thinking of meals...");
+            List<String> ideas;
+            try {
+                ideas = app.getMealIdeas(preferences);
+            } catch (RuntimeException error) {
+                System.out.println(error.getMessage());
+                return;
+            }
+            if (ideas == null) {
+                System.out.println("The AI is offline, so meal ideas are not available right now. Your targets are above."); // UC10 4a
+                return;
+            }
+            if (ideas.isEmpty()) {
+                System.out.println("The AI could not find meals that fit your allergies this time.");
+            }
+            for (int i = 0; i < ideas.size(); i++) {
+                System.out.println("  " + (i + 1) + ". " + ideas.get(i));
+            }
+
+            System.out.print("Accept an idea (type its number), regenerate (r), or press Enter to stop: ");
+            String choice = input.nextLine().trim().toLowerCase();
+            if (!choice.startsWith("r")) {
+                int pick = 0;
+                try {
+                    pick = Integer.parseInt(choice);
+                } catch (NumberFormatException error) {
+                    pick = 0; // Enter or not a number, so nothing is saved
+                }
+                if (pick >= 1 && pick <= ideas.size()) {
+                    app.acceptMealIdea(ideas.get(pick - 1));
+                    System.out.println("Saved. The coach will remember that you like this meal.");
+                }
+                return;
+            }
         }
     }
 

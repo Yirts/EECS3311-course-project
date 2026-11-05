@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import fitnesscoach.plan.Exercise;
+import fitnesscoach.plan.ExerciseLibrary;
 import fitnesscoach.plan.WorkoutDay;
 
 public class WorkoutHistory
@@ -126,6 +128,41 @@ public class WorkoutHistory
 		}
 		return progress;
 	}
+
+
+    // F08: how many sets each main muscle got in the last few days, for "the muscle groups trained most and least".
+    // Every main muscle from the exercise library is in the map, so the ones that were not trained show 0
+    public Map<String, Integer> getMuscleSets(int days) {
+        TreeMap<String, Integer> sets = new TreeMap<>();
+        for (Exercise exercise : ExerciseLibrary.getInstance().getExercises()) {
+            sets.put(exercise.getMuscles().get(0), 0);
+        }
+
+        for (WorkoutLog log : getRecentWorkouts(days)) {
+            for (SetLog set : log.getSets()) {
+                Exercise exercise = ExerciseLibrary.getInstance().findExercise(set.getExerciseName());
+                if (exercise != null) {
+                    String muscle = exercise.getMuscles().get(0); // the first muscle is the main one
+                    sets.put(muscle, sets.get(muscle) + 1);
+                }
+            }
+        }
+        return sets;
+    }
+
+    // F08: the heaviest weight ever lifted for each exercise (bodyweight sets are left out)
+    public Map<String, Double> getPersonalRecords() {
+        TreeMap<String, Double> records = new TreeMap<>();
+        for (WorkoutLog log : logs) {
+            for (SetLog set : log.getSets()) {
+                Double best = records.get(set.getExerciseName());
+                if (set.getWeightKg() > 0 && (best == null || set.getWeightKg() > best)) {
+                    records.put(set.getExerciseName(), set.getWeightKg());
+                }
+            }
+        }
+        return records;
+    }
 
 
 	public List<WorkoutLog> getLogs()

@@ -32,6 +32,10 @@ A Java desktop app with a JavaFX GUI and a command-line interface (CLI). An AI a
 | `workout skip` | Skips the current exercise without counting it as a failed attempt (F05) |
 | `workout finish` | Saves the workout and shows the total, any new records and your next weights. Exercises that have been stuck for 3 workouts go to the AI for a lighter week or a new exercise (F05, F06) |
 | `plan progress` | Shows the weights for your next workouts, and lets you change one (F06) |
+| `progress --exercise "Bench Press" --range 12w` | Your dashboard: strength over time for the exercise, sets for each muscle, personal records and body weight. Ranges look like `12w`, `30d` or `6m`. Add `--bodyweight 78.5` to save today's body weight (F08) |
+| `chat` | Talk to the AI coach about your own workouts and plan, or ask one question with `chat "How is my bench press going?"` (F09) |
+| `nutrition targets` | Your daily calorie, protein, carb and fat targets (F10) |
+| `nutrition meals` | Meal ideas from the AI that fit your targets and food preferences. Allergies are always checked (F10) |
 
 ## Run it with Maven
 

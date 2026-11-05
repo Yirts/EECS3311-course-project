@@ -6,6 +6,7 @@ import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import fitnesscoach.data.UserProfile;
 import fitnesscoach.history.CheckIn;
@@ -39,7 +40,7 @@ public class FitnessAgent
 			+ "When you have what you need, reply with your final answer and do not write TOOL.\n";
 
     // the kinds of boundaries the AI can write, like "avoid: quads" (F01)
-    private static final String[] BOUNDARY_KINDS = {"goal", "days", "minutes", "equipment", "avoid", "note", "question", "doctor"};
+    private static final String[] BOUNDARY_KINDS = {"goal", "days", "minutes", "equipment", "avoid", "allergy", "note", "question", "doctor"};
     private static final String BOUNDARY_FORMAT =
             "Turn the user's notes into a list of boundaries that every workout plan must follow.\n"
             + "Write one boundary per line, and start each line with one of these kinds:\n"
@@ -49,6 +50,7 @@ public class FitnessAgent
             + "equipment: the equipment the user has, from this list: band, barbell, cable, dumbbell, kettlebell, machine, pull-up bar\n"
             + "avoid: a muscle or an exercise the user must not train because of an injury, one per line. "
             + "Use the muscle names from the search tool, for example a knee injury means avoid: quads\n"
+            + "allergy: a food the user is allergic to, one per line\n"
             + "note: anything else the planner should know\n"
             + "question: a follow-up question when something important is unclear, for example how serious an injury is\n"
             + "doctor: a short warning to see a doctor before starting, only if the notes mention a serious medical problem\n"
@@ -70,6 +72,22 @@ public class FitnessAgent
     private static final String[] SERIOUS_WORDS = {"chest pain", "sharp pain", "dizzy", "faint", "short of breath", "can't breathe",
             "cannot breathe", "heart"};
 
+    // the calculator tool, described in the prompts that can use it (F09, F10)
+    private static final String CALCULATOR_TOOL =
+            "- calculator: \"TOOL calculator: targets\" gives the user's daily calorie and macro targets, "
+            + "and \"TOOL calculator: <number> + <number>\" adds up numbers, like the calories of a few meals.\n";
+
+    // the fixed allergy check also looks for the foods that belong to these common allergies (F10)
+    private static final String[][] ALLERGY_FOODS = {
+            {"dairy", "milk", "cheese", "yogurt", "cream", "butter", "whey"},
+            {"lactose", "milk", "cheese", "yogurt", "cream"},
+            {"gluten", "wheat", "bread", "pasta", "flour", "barley", "couscous", "tortilla"},
+            {"shellfish", "shrimp", "prawn", "crab", "lobster", "mussel", "clam", "oyster", "scallop"},
+            {"fish", "salmon", "tuna", "cod", "tilapia", "sardine", "trout"},
+            {"nut", "almond", "walnut", "cashew", "pecan", "hazelnut", "pistachio", "peanut"},
+            {"egg", "omelette", "mayonnaise"},
+            {"soy", "tofu", "edamame", "tempeh"}};
+
     // the starter plan trains these muscles, in this order, until the workout is full
     private static final String[] STARTER_MUSCLES = {"quads", "chest", "back", "shoulders", "core", "hamstrings", "glutes", "biceps", "triceps", "calves"};
 
@@ -77,6 +95,7 @@ public class FitnessAgent
 	private AIModel backupModel;
 	private WorkoutHistory history;
 	private List<String> memory;
+    private UserProfile profile; // the profile the calculator tool uses, set by answerQuestion() and createMealIdeas()
 
 
 	public FitnessAgent(AIModel mainModel, AIModel backupModel, WorkoutHistory history)
@@ -106,11 +125,11 @@ public class FitnessAgent
             for (String kind : BOUNDARY_KINDS) {
                 if (line.toLowerCase().startsWith(kind + ":")) {
                     String value = line.substring(kind.length() + 1).trim();
-                    if (kind.equals("avoid")) {
-                        // the safety check needs one muscle or exercise in each "avoid:" boundary
+                    if (kind.equals("avoid") || kind.equals("allergy")) {
+                        // the safety check and the allergy check need one thing in each boundary
                         for (String part : value.split(",")) {
                             if (!part.isBlank()) {
-                                boundaries.add("avoid: " + part.trim());
+                                boundaries.add(kind + ": " + part.trim());
                             }
                         }
                     } else if (!value.isEmpty()) {
@@ -349,28 +368,104 @@ public class FitnessAgent
     }
 
 
-	public String answerQuestion(String question)
-	{
-		String prompt = "The user asks: " + question + "\n"
-				+ "Answer as a friendly fitness coach, using the user's own data from the tools when it helps. "
-				+ "Say where your information came from, for example \"from your workouts on 2026-10-20\". "
-				+ "Only give general fitness advice and tell the user to see a doctor about anything medical. "
-				+ "If the question is not about fitness, politely bring the talk back to fitness. "
-				+ "If the answer is not in the user's data, say so instead of guessing.";
+    /** F09: answers a question without the profile and the plan. */
+    public String answerQuestion(String question) {
+        return answerQuestion(question, null, null);
+    }
 
-		String answer = runAgentLoop(prompt);
-		if (answer == null)
-		{
-			return "The coach is offline right now. Check your internet connection or start the local Llama model.";
-		}
+    /**
+     * F09: answers a question as a coach, using the tools for the user's own data. The profile and the next 7 days
+     * of the plan are in the prompt, so the coach can explain the plan. The question is remembered for next time.
+     */
+    public String answerQuestion(String question, UserProfile profile, WorkoutPlan plan) {
+        this.profile = profile; // for the calculator tool
+        String about = "";
+        if (profile != null) {
+            about += describeProfile(profile);
+        }
+        if (plan != null) {
+            about += "The user's plan for the next 7 days:\n" + describeNextWeek(plan);
+        }
 
-		memory.add("The user asked: " + question); //so the coach remembers the conversation next time
-		if (memory.size() > MAX_MEMORY)
-		{
-			memory.remove(0);
-		}
-		return answer;
-	}
+        String prompt = about + "You also have this tool:\n" + CALCULATOR_TOOL + "\n"
+                + "The user asks: " + question + "\n"
+                + "Answer as a friendly fitness coach, using the user's own data from the tools when it helps. "
+                + "Say where your information came from, for example \"from your workouts on 2026-10-20\". "
+                + "Only give general fitness advice and tell the user to see a doctor about anything medical. "
+                + "If the question is not about fitness, politely bring the talk back to fitness. "
+                + "If the answer is not in the user's data, say so instead of guessing.";
+
+        String answer = runAgentLoop(prompt);
+        if (answer == null) {
+            return "The coach is offline right now. Check your internet connection or start the local Llama model.";
+        }
+        remember("The user asked: " + question); // so the coach remembers the conversation next time
+
+        // the local Llama model sometimes leaves a tool request in its final answer, which the user should not see
+        String cleaned = "";
+        for (String line : answer.split("\n")) {
+            if (!line.trim().startsWith("TOOL")) {
+                cleaned += line + "\n";
+            }
+        }
+        return cleaned.trim();
+    }
+
+    /**
+     * F10: asks the AI for 3 meal ideas that fit the user's targets and food preferences, like
+     * "Chicken rice bowl: chicken, rice, broccoli (about 650 calories, 45 g protein)". A fixed allergy check removes
+     * any idea with one of the user's allergies, and the AI is asked once more to replace it (UC10 5a).
+     * The preferences are remembered. Returns null when no AI model can be reached (UC10 4a).
+     */
+    public List<String> createMealIdeas(UserProfile profile, String preferences) {
+        this.profile = profile; // for the calculator tool
+        ArrayList<String> allergies = new ArrayList<>();
+        for (String boundary : profile.getBoundaries()) {
+            if (boundary.toLowerCase().startsWith("allergy:")) {
+                allergies.add(boundary.substring(8).trim().toLowerCase());
+            }
+        }
+        if (!preferences.isBlank()) {
+            remember("Food preferences: " + preferences.replace("\n", "; "));
+        }
+
+        String allergyText = "nothing";
+        if (!allergies.isEmpty()) {
+            allergyText = String.join(", ", allergies);
+        }
+        String prompt = "Suggest 3 meal ideas for this user.\n" + describeProfile(profile)
+                + "Their food preferences: " + preferences.replace("\n", "; ") + "\n"
+                + "They are allergic to: " + allergyText + ". Never use these foods.\n"
+                + "You also have this tool:\n" + CALCULATOR_TOOL
+                + "Use the calculator to get the user's daily targets. Each meal should be about a third of the daily calories, with plenty of protein.\n"
+                + "Write exactly 3 lines in this format, with nothing before or after them:\n"
+                + "<meal name> | <main ingredients> | <calories> | <grams of protein>\n";
+
+        ArrayList<String> ideas = new ArrayList<>();
+        for (int round = 0; round < 2 && ideas.size() < 3; round++) {
+            String reply = runAgentLoop(prompt);
+            if (reply == null) {
+                if (round == 0) {
+                    return null;
+                }
+                return ideas;
+            }
+
+            ArrayList<String> removed = new ArrayList<>();
+            for (String line : reply.split("\n")) {
+                String idea = readMealIdea(cleanLine(line));
+                if (idea != null && hasAllergy(idea, allergies)) {
+                    removed.add(idea);
+                } else if (idea != null && ideas.size() < 3 && !ideas.contains(idea)) {
+                    ideas.add(idea);
+                }
+            }
+            // ask again for the ideas that are missing, saying which ones broke an allergy
+            prompt += "\n\nThese ideas were removed because they have a food the user is allergic to: " + String.join("; ", removed)
+                    + "\nWrite " + (3 - ideas.size()) + " new ideas in the same format, different from: " + String.join("; ", ideas) + "\n";
+        }
+        return ideas;
+    }
 
 
 	public List<String> getMemory()
@@ -474,6 +569,10 @@ public class FitnessAgent
 
 	private String useTool(String toolName, String input)
 	{
+        if (toolName.equalsIgnoreCase("calculator")) {
+            return useCalculator(input); // F10
+        }
+
 		if (toolName.equalsIgnoreCase("search"))
 		{
 			String[] parts = input.split("\\|");
@@ -550,7 +649,7 @@ public class FitnessAgent
 			}
 			return "Saved.";
 		}
-		return "Unknown tool: " + toolName + ". The tools are search, history and remember.";
+		return "Unknown tool: " + toolName + ". The tools are search, history, remember and calculator.";
 	}
 
 
@@ -909,6 +1008,92 @@ public class FitnessAgent
         for (String option : options) {
             if (option.equals(name) || option.startsWith(name + ":")) {
                 return true;
+            }
+        }
+        return false;
+    }
+
+    // the calculator tool: "targets" gives the user's daily targets, and numbers with + between them are added up
+    private String useCalculator(String input) {
+        if (input.trim().equalsIgnoreCase("targets")) {
+            if (profile == null) {
+                return "There is no profile yet, so there are no targets.";
+            }
+            Map<String, Integer> targets = profile.calculateTargets();
+            return "Daily targets: " + targets.get("calories") + " calories, " + targets.get("protein") + " g protein, "
+                    + targets.get("carbs") + " g carbs, " + targets.get("fat") + " g fat";
+        }
+
+        double total = 0;
+        for (String part : input.split("\\+")) {
+            double number = readNumber(part);
+            if (number < 0) {
+                return "The calculator adds numbers like 450 + 620, or gives the daily targets with: TOOL calculator: targets";
+            }
+            total += number;
+        }
+        return input.trim() + " = " + total;
+    }
+
+    // adds a fact to the memory, at most MAX_MEMORY facts and no fact twice
+    private void remember(String fact) {
+        if (memory.contains(fact)) {
+            return;
+        }
+        memory.add(fact);
+        if (memory.size() > MAX_MEMORY) {
+            memory.remove(0);
+        }
+    }
+
+    // the plan from today to 6 days from now, in the same format the AI writes
+    private String describeNextWeek(WorkoutPlan plan) {
+        String text = "";
+        for (WorkoutDay day : plan.getDays()) {
+            if (!day.getDate().isBefore(LocalDate.now()) && day.getDate().isBefore(LocalDate.now().plusDays(7))) {
+                text += describeDay(day);
+            }
+        }
+        if (text.isEmpty()) {
+            return "(no workouts in the next 7 days)\n";
+        }
+        return text;
+    }
+
+    // reads "Chicken rice bowl | chicken, rice, broccoli | 650 | 45" into
+    // "Chicken rice bowl: chicken, rice, broccoli (about 650 calories, 45 g protein)", or null when it is not in that format
+    private String readMealIdea(String line) {
+        String[] parts = line.split("\\|");
+        if (parts.length < 4 || parts[0].isBlank()) {
+            return null;
+        }
+        double calories = readNumber(parts[2]);
+        double protein = readNumber(parts[3]);
+        if (calories < 0 || protein < 0) {
+            return null;
+        }
+        return parts[0].trim() + ": " + parts[1].trim() + " (about " + (int) calories + " calories, " + (int) protein + " g protein)";
+    }
+
+    // the fixed allergy check: true when the meal has one of the allergies, or a food that belongs to one (UC10 5a)
+    private boolean hasAllergy(String meal, List<String> allergies) {
+        String text = meal.toLowerCase();
+        for (String allergy : allergies) {
+            String food = allergy;
+            if (food.endsWith("s")) {
+                food = food.substring(0, food.length() - 1); // peanuts becomes peanut, so "peanut butter" is found
+            }
+            if (text.contains(food)) {
+                return true;
+            }
+            for (String[] group : ALLERGY_FOODS) {
+                if (food.equals(group[0]) || food.endsWith(" " + group[0])) {
+                    for (String groupFood : group) {
+                        if (text.contains(groupFood)) {
+                            return true;
+                        }
+                    }
+                }
             }
         }
         return false;

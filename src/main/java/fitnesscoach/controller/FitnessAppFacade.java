@@ -349,6 +349,79 @@ public class FitnessAppFacade {
         return history.getProgress(exerciseName);
     }
 
+    /** F08: adds today's body weight to the profile and saves it, for the body weight chart. */
+    public void addBodyWeight(double weightKg) {
+        if (profile == null) {
+            throw new IllegalStateException("Please set up your profile first.");
+        }
+        profile.addBodyWeight(weightKg); // throws when the weight is not realistic
+        dataStore.saveProfile(profile);
+    }
+
+    /** F08: how many sets each main muscle got in the last few days, for the muscles trained most and least. */
+    public Map<String, Integer> getMuscleSets(int days) {
+        return history.getMuscleSets(days);
+    }
+
+    /** F08: the heaviest weight ever lifted for each exercise. */
+    public Map<String, Double> getPersonalRecords() {
+        return history.getPersonalRecords();
+    }
+
+    /** F09: the coach answers a question about the user's own data, and the conversation is saved for next time. */
+    public String askCoach(String question) {
+        if (question == null || question.isBlank()) {
+            throw new IllegalArgumentException("Please type a question.");
+        }
+        String answer = agent.answerQuestion(question, profile, currentPlan);
+        dataStore.saveMemory(agent.getMemory());
+        return answer;
+    }
+
+    /** F10: the daily calorie and macro targets from the profile. No AI is used. */
+    public Map<String, Integer> calculateTargets() {
+        if (profile == null) {
+            throw new IllegalStateException("Please set up your profile first.");
+        }
+        return profile.calculateTargets();
+    }
+
+    /**
+     * F10: asks the agent for meal ideas that fit the targets and the food preferences. A line like
+     * "allergies: peanuts, shellfish" in the preferences adds strict "allergy:" boundaries to the profile, so every
+     * later meal idea follows them too. Returns null when the AI is offline (UC10 4a).
+     */
+    public List<String> getMealIdeas(String preferences) {
+        if (profile == null) {
+            throw new IllegalStateException("Please set up your profile first.");
+        }
+        if (preferences == null) {
+            preferences = "";
+        }
+
+        for (String line : preferences.split("\n")) {
+            if (line.trim().toLowerCase().startsWith("allergies:")) {
+                for (String allergy : line.trim().substring(10).split(",")) {
+                    String food = allergy.trim().toLowerCase();
+                    if (!food.isEmpty() && !food.equals("none")) {
+                        profile.addBoundary("allergy: " + food);
+                    }
+                }
+                dataStore.saveProfile(profile);
+            }
+        }
+
+        List<String> ideas = agent.createMealIdeas(profile, preferences);
+        dataStore.saveMemory(agent.getMemory());
+        return ideas;
+    }
+
+    /** F10: remembers a meal idea the user accepted, so the coach knows what they like (UC10 7). */
+    public void acceptMealIdea(String idea) {
+        agent.getMemory().add("The user liked this meal idea: " + idea);
+        dataStore.saveMemory(agent.getMemory());
+    }
+
     public UserProfile getProfile() {
         return profile;
     }

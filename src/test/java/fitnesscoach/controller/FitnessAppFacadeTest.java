@@ -831,6 +831,150 @@ class FitnessAppFacadeTest {
         assertThrows(IllegalArgumentException.class, () -> app.overrideWeight(rowOn(app, 0), -5));
     }
 
+    // ----- F08: addBodyWeight(), getMuscleSets() and getPersonalRecords() -----
+
+    @Test
+    void addBodyWeightIsSaved() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        app.addBodyWeight(78.5);
+
+        assertEquals(78.5, savedData().loadProfile().getWeightHistory().get(LocalDate.now()));
+    }
+
+    @Test
+    void addBodyWeightRejectsAnUnrealisticWeight() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        assertThrows(IllegalArgumentException.class, () -> app.addBodyWeight(5));
+    }
+
+    @Test
+    void addBodyWeightWithoutAProfileThrows() {
+        FitnessAppFacade app = makeApp(new FakeModel());
+
+        assertThrows(IllegalStateException.class, () -> app.addBodyWeight(78.5));
+    }
+
+    @Test
+    void getMuscleSetsCountsTheFinishedWorkout() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+        logRows(app, 10);
+        app.finishWorkout();
+
+        assertEquals(3, app.getMuscleSets(7).get("back"));
+    }
+
+    @Test
+    void getPersonalRecordsHasTheHeaviestSet() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        app.startWorkout();
+        logRows(app, 10);
+        app.finishWorkout();
+
+        assertEquals(20.0, app.getPersonalRecords().get("Dumbbell Row"));
+    }
+
+    // ----- F09: askCoach() -----
+
+    @Test
+    void askCoachReturnsTheAnswer() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel("Rest days help your muscles grow."));
+
+        assertEquals("Rest days help your muscles grow.", app.askCoach("Why do I need rest days?"));
+    }
+
+    @Test
+    void askCoachSavesTheConversation() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel("Rest days help your muscles grow."));
+
+        app.askCoach("Why do I need rest days?");
+
+        assertTrue(savedData().loadMemory().contains("The user asked: Why do I need rest days?"));
+    }
+
+    @Test
+    void askCoachGivesTheAiThePlan() {
+        FakeModel model = new FakeModel("Rows are good for your back.");
+        FitnessAppFacade app = makeAppWithTodaysWorkout(model);
+
+        app.askCoach("Why am I doing rows today?");
+
+        assertTrue(model.prompts.get(0).contains("Dumbbell Row | 3 | 10 | 20.0"));
+    }
+
+    @Test
+    void askCoachWithAnEmptyQuestionThrows() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        assertThrows(IllegalArgumentException.class, () -> app.askCoach(" "));
+    }
+
+    @Test
+    void askCoachWhenTheAiIsOfflineSaysSo() {
+        FakeModel model = new FakeModel();
+        model.available = false;
+        FitnessAppFacade app = makeAppWithProfile(model);
+
+        assertTrue(app.askCoach("Why do I need rest days?").contains("offline"));
+    }
+
+    // ----- F10: calculateTargets(), getMealIdeas() and acceptMealIdea() -----
+
+    @Test
+    void calculateTargetsUsesTheProfile() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        assertEquals(newProfile().calculateTargets(), app.calculateTargets());
+    }
+
+    @Test
+    void calculateTargetsWithoutAProfileThrows() {
+        FitnessAppFacade app = makeApp(new FakeModel());
+
+        assertThrows(IllegalStateException.class, () -> app.calculateTargets());
+    }
+
+    @Test
+    void getMealIdeasReturnsTheIdeas() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel(THREE_MEALS));
+
+        List<String> ideas = app.getMealIdeas("likes: chicken");
+
+        assertEquals("Chicken rice bowl: chicken, rice, broccoli (about 650 calories, 45 g protein)", ideas.get(0));
+    }
+
+    @Test
+    void getMealIdeasSavesTypedAllergiesInTheProfile() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel(THREE_MEALS));
+
+        app.getMealIdeas("likes: chicken\nallergies: Peanuts, shellfish");
+
+        assertTrue(savedData().loadProfile().getBoundaries().contains("allergy: shellfish"));
+    }
+
+    @Test
+    void getMealIdeasWhenTheAiIsOfflineReturnsNull() {
+        FakeModel model = new FakeModel();
+        model.available = false;
+        FitnessAppFacade app = makeAppWithProfile(model);
+
+        assertNull(app.getMealIdeas("likes: chicken"));
+    }
+
+    @Test
+    void acceptMealIdeaIsRemembered() {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+
+        app.acceptMealIdea("Chicken rice bowl: chicken, rice, broccoli");
+
+        assertTrue(savedData().loadMemory().get(0).contains("Chicken rice bowl"));
+    }
+
+    private static final String THREE_MEALS = "Chicken rice bowl | chicken, rice, broccoli | 650 | 45\n"
+            + "Greek yogurt bowl | greek yogurt, berries, oats | 450 | 30\n"
+            + "Salmon and potatoes | salmon, potatoes, green beans | 700 | 42";
     private static final String LIGHTER_ROWS = "DAY " + LocalDate.now() + ": Back, lighter (you slept badly)\nDumbbell Row | 2 | 10 | 20";
 
     private UserProfile newProfile() {
