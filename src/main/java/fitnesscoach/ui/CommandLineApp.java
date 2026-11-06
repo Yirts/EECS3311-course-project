@@ -113,7 +113,7 @@ public class CommandLineApp
         printCommand("workout skip", "skip the current exercise");
         printCommand("workout finish", "finish the workout and see your next weights");
         printCommand("plan progress", "see your next weights and change one");
-        printCommand("progress --exercise \"Bench Press\" --range 12w", "your progress dashboard (--bodyweight 78.5 adds a body weight)");
+        printCommand("progress --exercise \"Barbell Squat\" --range 12w", "your progress dashboard (--bodyweight 78.5 adds a body weight)");
         printCommand("chat", "talk to the AI coach (or: chat \"your question\")");
         printCommand("nutrition targets", "your daily calorie and macro targets");
         printCommand("nutrition meals", "meal ideas that fit your targets and allergies");
@@ -629,7 +629,7 @@ public class CommandLineApp
         }
     }
 
-    // F08: fitagent progress --exercise "Bench Press" --range 12w (and --bodyweight 78.5 to add today's body weight)
+    // F08: fitagent progress --exercise "Barbell Squat" --range 12w (and --bodyweight 78.5 to add today's body weight)
     private void showDashboard(String command) {
         String bodyWeight = readFlag(command, "--bodyweight");
         if (bodyWeight != null) {
@@ -656,10 +656,11 @@ public class CommandLineApp
         }
 
         String exercise = readFlag(command, "--exercise");
-        if (exercise != null) {
-            if (ExerciseLibrary.getInstance().findExercise(exercise) != null) {
-                exercise = ExerciseLibrary.getInstance().findExercise(exercise).getName();
-            }
+        if (exercise != null && ExerciseLibrary.getInstance().findExercise(exercise) == null) {
+            System.out.println(exercise + " is not in the exercise library, so there is no chart for it. "
+                    + "The names under \"Personal records\" below will work.");
+        } else if (exercise != null) {
+            exercise = ExerciseLibrary.getInstance().findExercise(exercise).getName();
             TreeMap<LocalDate, Double> points = new TreeMap<>();
             for (Map.Entry<LocalDate, Double> entry : app.getProgress(exercise).entrySet()) {
                 if (entry.getKey().isAfter(from)) {

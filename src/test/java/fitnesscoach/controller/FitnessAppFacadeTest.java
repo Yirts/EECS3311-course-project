@@ -20,6 +20,7 @@ import fitnesscoach.data.DataStore;
 import fitnesscoach.data.UserProfile;
 import fitnesscoach.history.CheckIn;
 import fitnesscoach.history.SetLog;
+import fitnesscoach.history.WorkoutLog;
 import fitnesscoach.plan.ExerciseLibrary;
 import fitnesscoach.plan.PlannedExercise;
 import fitnesscoach.plan.WorkoutDay;
@@ -877,6 +878,31 @@ class FitnessAppFacadeTest {
         app.finishWorkout();
 
         assertEquals(20.0, app.getPersonalRecords().get("Dumbbell Row"));
+    }
+
+    @Test
+    void anObserverIsToldWhenAWorkoutIsFinished() {
+        FitnessAppFacade app = makeAppWithTodaysWorkout(new FakeModel());
+        ArrayList<WorkoutLog> told = new ArrayList<>();
+        app.addObserver(log -> told.add(log));
+        app.startWorkout();
+        logRows(app, 10);
+
+        app.finishWorkout();
+
+        assertEquals(1, told.size());
+    }
+
+    @Test
+    void anObserverIsToldAboutEachImportedWorkout() throws IOException {
+        FitnessAppFacade app = makeAppWithProfile(new FakeModel());
+        ArrayList<WorkoutLog> told = new ArrayList<>();
+        app.addObserver(log -> told.add(log));
+        app.importWorkoutHistory(writeCsv(TWO_WORKOUTS));
+
+        app.confirmImport(Map.of());
+
+        assertEquals(2, told.size());
     }
 
     // ----- F09: askCoach() -----

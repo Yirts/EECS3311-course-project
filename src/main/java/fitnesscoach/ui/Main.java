@@ -1,5 +1,6 @@
 package fitnesscoach.ui;
 
+import java.io.File;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -17,6 +18,7 @@ import fitnesscoach.data.UserProfile;
 import fitnesscoach.history.CheckIn;
 import fitnesscoach.history.SetLog;
 import fitnesscoach.history.WorkoutLog;
+import fitnesscoach.history.WorkoutObserver;
 import fitnesscoach.plan.Exercise;
 import fitnesscoach.plan.ExerciseLibrary;
 import fitnesscoach.plan.PlannedExercise;
@@ -25,6 +27,7 @@ import fitnesscoach.plan.WorkoutPlan;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.collections.FXCollections;
 import javafx.concurrent.Task;
@@ -32,6 +35,11 @@ import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
+import javafx.scene.chart.BarChart;
+import javafx.scene.chart.CategoryAxis;
+import javafx.scene.chart.LineChart;
+import javafx.scene.chart.NumberAxis;
+import javafx.scene.chart.XYChart;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
@@ -44,6 +52,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Slider;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.Tab;
@@ -55,19 +64,24 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.RowConstraints;
 import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
 /**
  * The JavaFX window, with one tab for each page (the View in MVC). Each button calls the facade method with the same name.
  * Calls to the AI run on a background thread, so the window does not freeze while the AI is thinking.
+ * Observer pattern: the window is an observer of the workout history, so the dashboard refreshes after every workout.
  */
-public class Main extends Application {
+public class Main extends Application implements WorkoutObserver {
     private static final int REST_SECONDS = 90;
+    private static final String LEAVE_OUT = "(leave it out)";
 
     private FitnessAppFacade app;
     private TabPane tabs;
@@ -124,6 +138,47 @@ public class Main extends Application {
     private Timeline restTimer;
     private int restSecondsLeft;
 
+    // Progress Dashboard tab (F08)
+    private ComboBox<String> chartExerciseBox;
+    private ChoiceBox<String> rangeBox;
+    private LineChart<String, Number> strengthChart;
+    private BarChart<String, Number> muscleChart;
+    private LineChart<String, Number> bodyWeightChart;
+    private Label strengthNote;
+    private Label muscleNote;
+    private Label bodyWeightNote;
+    private ListView<String> recordsList;
+    private TextField bodyWeightField;
+    private Label dashboardMessage;
+    private boolean refreshingDashboard; // so filling the exercise box does not start another refresh
+
+    // Coach Chatbox tab (F09)
+    private TextArea chatArea;
+    private TextField questionField;
+
+    // Nutrition tab (F10)
+    private Label targetsLabel;
+    private TextField likesField;
+    private TextField dislikesField;
+    private TextField allergiesField;
+    private VBox ideasBox;
+    private Label nutritionMessage;
+
+    // Report tab (F11)
+    private TextArea reportArea;
+    private VBox suggestionsBox;
+    private Button saveReportButton;
+    private Label reportMessage;
+    private String report;
+
+    // Import tab (F12)
+    private TextArea previewArea;
+    private ScrollPane matchesPane;
+    private VBox matchesBox;
+    private HashMap<String, ComboBox<String>> matchBoxes = new HashMap<>();
+    private HBox importButtons;
+    private Label importMessage;
+
     public Main() {
         // the facade is made in start(), when the window opens
     }
@@ -153,12 +208,14 @@ public class Main extends Application {
         tabs.getTabs().add(new Tab("Profile", buildProfileTab()));
         tabs.getTabs().add(new Tab("Workout Plan", buildPlanTab()));
         tabs.getTabs().add(new Tab("Workout", buildWorkoutTab()));
-        for (String page : new String[] {"Progress Dashboard", "Coach Chatbox", "Nutrition", "Report", "Import"}) {
-            Label later = new Label("The " + page + " page is not in the window yet. For now it works in the CLI (fitagent help).");
-            later.setPadding(new Insets(16));
-            tabs.getTabs().add(new Tab(page, later));
-        }
+        tabs.getTabs().add(new Tab("Progress Dashboard", buildDashboardTab()));
+        tabs.getTabs().add(new Tab("Coach Chatbox", buildChatTab()));
+        tabs.getTabs().add(new Tab("Nutrition", buildNutritionTab()));
+        tabs.getTabs().add(new Tab("Report", buildReportTab()));
+        tabs.getTabs().add(new Tab("Import", buildImportTab()));
+        app.addObserver(this); // the dashboard is told about every finished or imported workout
         refreshAll();
+        refreshDashboard();
 
         BorderPane root = new BorderPane(tabs);
         root.setBottom(statusBar);
@@ -324,6 +381,8 @@ public class Main extends Application {
         confirmButton.setDisable(true);
         boundariesArea.setEditable(false);
         profileMessage.setText("Your profile is saved. Go to the Workout Plan page to make a plan.");
+        showAllergies();
+        refreshDashboard(); // the body weight chart has the new weight
     }
 
     // ----- Workout Plan tab (F02, F03, F04, F06) -----
@@ -408,6 +467,14 @@ public class Main extends Application {
             planMessage.setText("Type the change you want first.");
             return;
         }
+        changePlan(request, "The changed workouts are marked with a star. Confirm or undo the change, "
+                + "or edit your request and regenerate.", this::requestChange);
+    }
+
+    // asks the AI to change the plan, and shows the change on this page, where it waits for Confirm or Undo.
+    // The weekly report's suggestions use it too (F11)
+    private void changePlan(String request, String text, Runnable again) {
+        tabs.getSelectionModel().select(1); // the Workout Plan page
         runInBackground("The AI is changing your plan...", () -> app.requestChange(request), plan -> {
             if (plan == null) {
                 planMessage.setText("The AI is offline, so your plan can't be changed right now.");
@@ -415,14 +482,16 @@ public class Main extends Application {
             }
             if (findChangedDates(app.getCurrentPlan(), plan).isEmpty()) {
                 // UC03 2a: the request was not clear enough to change anything
-                app.undoChange();
-                planMessage.setText("The AI did not change anything. Try saying which days or exercises to change, "
-                        + "like \"only 30 minutes on tuesday\" or \"no bench next week\".");
+                // after Regenerate, the change that was already waiting stays, so Undo still drops only that change
+                if (pendingPlan == null) {
+                    app.undoChange();
+                }
+                planMessage.setText("The AI did not change anything for \"" + request + "\". Try saying which days or "
+                        + "exercises to change, like \"only 30 minutes on tuesday\" or \"no bench next week\".");
                 return;
             }
             pendingIsNewPlan = false;
-            showPending(plan, "The changed workouts are marked with a star. Confirm or undo the change, "
-                    + "or edit your request and regenerate.", "Confirm", "Undo", this::requestChange);
+            showPending(plan, text, "Confirm", "Undo", again);
         });
     }
 
@@ -1115,6 +1184,598 @@ public class Main extends Application {
         summaryArea.setManaged(!text.isEmpty());
     }
 
+    // ----- Progress Dashboard tab (F08) -----
+
+    private Node buildDashboardTab() {
+        chartExerciseBox = new ComboBox<>();
+        chartExerciseBox.setPrefWidth(200);
+        rangeBox = new ChoiceBox<>(FXCollections.observableArrayList("4 weeks", "12 weeks", "6 months", "1 year", "All time"));
+        rangeBox.setValue("12 weeks");
+        bodyWeightField = new TextField();
+        bodyWeightField.setPrefWidth(70);
+        bodyWeightField.setOnAction(event -> addBodyWeight());
+        Button bodyWeightButton = new Button("Add Today's Weight");
+        bodyWeightButton.setOnAction(event -> addBodyWeight());
+        HBox controls = new HBox(8, new Label("Exercise"), chartExerciseBox, new Label("Range"), rangeBox,
+                new Label("     Body weight (kg)"), bodyWeightField, bodyWeightButton);
+        controls.setAlignment(Pos.CENTER_LEFT);
+        dashboardMessage = new Label();
+        dashboardMessage.setWrapText(true);
+
+        strengthChart = lineChart("Strength: the heaviest set of each workout (kg)");
+        muscleChart = new BarChart<>(new CategoryAxis(), new NumberAxis());
+        muscleChart.setTitle("Sets for each muscle");
+        muscleChart.setLegendVisible(false);
+        muscleChart.setAnimated(false);
+        bodyWeightChart = lineChart("Body weight (kg)");
+        strengthNote = new Label();
+        muscleNote = new Label();
+        bodyWeightNote = new Label();
+        recordsList = new ListView<>();
+        recordsList.setPlaceholder(new Label("No records yet."));
+
+        GridPane grid = new GridPane();
+        grid.setHgap(16);
+        grid.setVgap(8);
+        grid.add(withNote(strengthChart, strengthNote), 0, 0);
+        grid.add(withNote(muscleChart, muscleNote), 1, 0);
+        grid.add(withNote(bodyWeightChart, bodyWeightNote), 0, 1);
+        grid.add(withNote(recordsList, new Label("Personal records: the heaviest weight for each exercise.")), 1, 1);
+        for (int i = 0; i < 2; i++) {
+            // the four parts share the page equally
+            ColumnConstraints column = new ColumnConstraints();
+            column.setPercentWidth(50);
+            grid.getColumnConstraints().add(column);
+            RowConstraints row = new RowConstraints();
+            row.setPercentHeight(50);
+            grid.getRowConstraints().add(row);
+        }
+        VBox.setVgrow(grid, Priority.ALWAYS);
+
+        // added last, so the boxes do not refresh the charts before the charts are made
+        chartExerciseBox.setOnAction(event -> refreshDashboard());
+        rangeBox.setOnAction(event -> refreshDashboard());
+
+        VBox page = new VBox(10, title("Your progress"), controls, dashboardMessage, grid);
+        page.setPadding(new Insets(16));
+        return page;
+    }
+
+    private LineChart<String, Number> lineChart(String title) {
+        NumberAxis weightAxis = new NumberAxis();
+        weightAxis.setForceZeroInRange(false); // so small changes can be seen
+        LineChart<String, Number> chart = new LineChart<>(new CategoryAxis(), weightAxis);
+        chart.setTitle(title);
+        chart.setLegendVisible(false);
+        chart.setAnimated(false);
+        return chart;
+    }
+
+    private VBox withNote(Node chart, Label note) {
+        note.setWrapText(true);
+        VBox.setVgrow(chart, Priority.ALWAYS);
+        return new VBox(4, chart, note);
+    }
+
+    // Observer pattern: the workout history calls this for each finished or imported workout. The call can come from
+    // a background thread, so the dashboard is refreshed on the JavaFX thread
+    @Override
+    public void onWorkoutLogged(WorkoutLog log) {
+        Platform.runLater(this::refreshDashboard);
+    }
+
+    // fills the charts for the chosen exercise and range
+    private void refreshDashboard() {
+        if (refreshingDashboard) {
+            return;
+        }
+        int days = rangeDays();
+        LocalDate from = LocalDate.now().minusDays(days);
+        Map<String, Double> records = app.getPersonalRecords();
+
+        // the exercise box lists the exercises lifted with a weight, and keeps the one that was chosen
+        String chosen = chartExerciseBox.getValue();
+        if (chosen == null || !records.containsKey(chosen)) {
+            chosen = null;
+            if (!records.isEmpty()) {
+                chosen = records.keySet().iterator().next();
+            }
+        }
+        refreshingDashboard = true; // changing the box calls refreshDashboard() again
+        chartExerciseBox.getItems().setAll(records.keySet());
+        chartExerciseBox.setValue(chosen);
+        refreshingDashboard = false;
+
+        int allSets = 0;
+        for (int sets : app.getMuscleSets(36500).values()) {
+            allSets += sets;
+        }
+        if (allSets == 0) {
+            // UC08 2a
+            dashboardMessage.setText("No workouts yet. Do one on the Workout page, or import your history on the Import page.");
+        } else {
+            dashboardMessage.setText("");
+        }
+
+        TreeMap<LocalDate, Double> points = new TreeMap<>();
+        if (chosen != null) {
+            for (Map.Entry<LocalDate, Double> entry : app.getProgress(chosen).entrySet()) {
+                if (entry.getKey().isAfter(from)) {
+                    points.put(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+        String typos = drawLine(strengthChart, points);
+        if (chosen == null) {
+            strengthNote.setText("Lift a weight in a workout to see your strength here.");
+        } else if (points.size() < 2) {
+            strengthNote.setText("Not enough data yet. " + chosen + " needs 2 workouts in this range to show a line."); // UC08 3a
+        } else {
+            strengthNote.setText(typos);
+        }
+
+        showMuscleSets(app.getMuscleSets(days));
+
+        TreeMap<LocalDate, Double> weights = new TreeMap<>();
+        if (app.getProfile() != null) {
+            for (Map.Entry<LocalDate, Double> entry : app.getProfile().getWeightHistory().entrySet()) {
+                if (entry.getKey().isAfter(from)) {
+                    weights.put(entry.getKey(), entry.getValue());
+                }
+            }
+        }
+        typos = drawLine(bodyWeightChart, weights);
+        if (weights.isEmpty()) {
+            bodyWeightNote.setText("No body weights in this range. Add today's weight above.");
+        } else {
+            bodyWeightNote.setText(typos);
+        }
+
+        recordsList.getItems().clear();
+        for (Map.Entry<String, Double> record : records.entrySet()) {
+            recordsList.getItems().add(record.getKey() + ": " + record.getValue() + " kg");
+        }
+    }
+
+    private int rangeDays() {
+        switch (rangeBox.getValue()) {
+            case "4 weeks":
+                return 28;
+            case "6 months":
+                return 182;
+            case "1 year":
+                return 365;
+            case "All time":
+                return 36500;
+            default:
+                return 84; // 12 weeks
+        }
+    }
+
+    // puts one point on the chart for each date. A point much bigger than the one before is red, because it could be
+    // a typo (UC08 3b), and the returned text says which ones
+    private String drawLine(LineChart<String, Number> chart, Map<LocalDate, Double> points) {
+        XYChart.Series<String, Number> series = new XYChart.Series<>();
+        ArrayList<XYChart.Data<String, Number>> typos = new ArrayList<>();
+        String text = "";
+        Double previous = null;
+        for (Map.Entry<LocalDate, Double> point : points.entrySet()) {
+            XYChart.Data<String, Number> data = new XYChart.Data<>(point.getKey().toString(), point.getValue());
+            series.getData().add(data);
+            if (previous != null && point.getValue() > previous * 1.5 && point.getValue() - previous >= 20) {
+                typos.add(data);
+                text += point.getKey() + " (" + point.getValue() + " kg) is much more than before. Is it a typo? ";
+            }
+            previous = point.getValue();
+        }
+        chart.getData().clear();
+        chart.getData().add(series);
+        for (XYChart.Data<String, Number> typo : typos) {
+            typo.getNode().setStyle("-fx-background-color: #b00020, white;"); // the point is made when the series is added
+        }
+        return text.trim();
+    }
+
+    // the bars go A to Z, and the note says which muscles were trained most and least
+    private void showMuscleSets(Map<String, Integer> muscles) {
+        XYChart.Series<String, Number> series = new XYChart.Series<>();
+        String most = null;
+        String least = null;
+        ArrayList<String> notTrained = new ArrayList<>();
+        for (Map.Entry<String, Integer> muscle : muscles.entrySet()) {
+            series.getData().add(new XYChart.Data<>(muscle.getKey(), muscle.getValue()));
+            if (most == null || muscle.getValue() > muscles.get(most)) {
+                most = muscle.getKey();
+            }
+            if (least == null || muscle.getValue() < muscles.get(least)) {
+                least = muscle.getKey();
+            }
+            if (muscle.getValue() == 0) {
+                notTrained.add(muscle.getKey());
+            }
+        }
+        muscleChart.getData().clear();
+        muscleChart.getData().add(series);
+
+        if (most == null || muscles.get(most) == 0) {
+            muscleNote.setText("No sets in this range.");
+        } else if (notTrained.isEmpty()) {
+            muscleNote.setText("Trained most: " + most + ". Trained least: " + least + ".");
+        } else {
+            muscleNote.setText("Trained most: " + most + ". Not trained at all: " + String.join(", ", notTrained) + ".");
+        }
+    }
+
+    private void addBodyWeight() {
+        try {
+            double weightKg = Double.parseDouble(bodyWeightField.getText().trim());
+            app.addBodyWeight(weightKg);
+            weightField.setText(String.valueOf(weightKg)); // the Profile page shows the new weight too
+            bodyWeightField.clear();
+            refreshDashboard();
+            dashboardMessage.setText("Saved today's body weight: " + weightKg + " kg.");
+        } catch (NumberFormatException error) {
+            dashboardMessage.setText("The body weight must be a number, like 78.5.");
+        } catch (IllegalArgumentException | IllegalStateException error) {
+            dashboardMessage.setText(error.getMessage());
+        }
+    }
+
+    // ----- Coach Chatbox tab (F09) -----
+
+    private Node buildChatTab() {
+        chatArea = new TextArea();
+        chatArea.setEditable(false);
+        chatArea.setWrapText(true);
+        chatArea.setPromptText("Ask the coach anything about your training, like \"Why is my bench press not going up?\" or "
+                + "\"How much protein should I eat?\". The coach can see your profile, your plan and your workouts.");
+        VBox.setVgrow(chatArea, Priority.ALWAYS);
+        questionField = new TextField();
+        questionField.setPromptText("Type your question");
+        questionField.setOnAction(event -> askCoach()); // Enter sends it too
+        HBox.setHgrow(questionField, Priority.ALWAYS);
+        Button sendButton = new Button("Send");
+        sendButton.setOnAction(event -> askCoach());
+
+        VBox page = new VBox(10, title("Coach chat"), chatArea, new HBox(8, questionField, sendButton));
+        page.setPadding(new Insets(16));
+        return page;
+    }
+
+    private void askCoach() {
+        String question = questionField.getText().trim();
+        if (question.isEmpty()) {
+            return;
+        }
+        questionField.clear();
+        chatArea.appendText("You: " + question + "\n\n");
+        runInBackground("The coach is thinking...", () -> app.askCoach(question), answer -> {
+            chatArea.appendText("Coach: " + answer + "\n\n");
+            questionField.requestFocus();
+        });
+    }
+
+    // ----- Nutrition tab (F10) -----
+
+    private Node buildNutritionTab() {
+        Button targetsButton = new Button("Calculate Targets");
+        targetsButton.setOnAction(event -> showTargets());
+        targetsLabel = new Label("Press Calculate Targets to see how much to eat each day for your goal.");
+        targetsLabel.setWrapText(true);
+        targetsLabel.setStyle("-fx-font-size: 14px;");
+        VBox left = new VBox(10, title("Daily targets"), targetsButton, targetsLabel);
+        left.setMinWidth(320);
+        left.setMaxWidth(320);
+
+        likesField = new TextField();
+        likesField.setPromptText("For example: chicken, rice, eggs");
+        likesField.setPrefWidth(380);
+        dislikesField = new TextField();
+        dislikesField.setPromptText("For example: fish, mushrooms");
+        allergiesField = new TextField();
+        allergiesField.setPromptText("Separated by commas, or leave it empty");
+        showAllergies();
+        GridPane form = new GridPane();
+        form.setHgap(8);
+        form.setVgap(8);
+        form.addRow(0, new Label("Foods you like"), likesField);
+        form.addRow(1, new Label("Foods you don't like"), dislikesField);
+        form.addRow(2, new Label("Allergies"), allergiesField);
+        Button ideasButton = new Button("Get Meal Ideas");
+        ideasButton.setOnAction(event -> getMealIdeas());
+        nutritionMessage = new Label();
+        nutritionMessage.setWrapText(true);
+        ideasBox = new VBox(8);
+        VBox right = new VBox(10, title("Meal ideas"), form, ideasButton, nutritionMessage, ideasBox);
+        HBox.setHgrow(right, Priority.ALWAYS);
+
+        HBox page = new HBox(24, left, right);
+        page.setPadding(new Insets(16));
+        return page;
+    }
+
+    // the allergies box starts with the allergies saved in the profile
+    private void showAllergies() {
+        if (app.getProfile() == null) {
+            return;
+        }
+        ArrayList<String> allergies = new ArrayList<>();
+        for (String boundary : app.getProfile().getBoundaries()) {
+            if (boundary.toLowerCase().startsWith("allergy:")) {
+                allergies.add(boundary.substring(8).trim());
+            }
+        }
+        allergiesField.setText(String.join(", ", allergies));
+    }
+
+    // F10: the daily calories and macros, worked out from the profile without the AI. Returns false with no profile
+    private boolean showTargets() {
+        Map<String, Integer> targets;
+        try {
+            targets = app.calculateTargets();
+        } catch (IllegalStateException error) {
+            targetsLabel.setText(error.getMessage());
+            return false;
+        }
+        String text = "Calories: " + targets.get("calories") + " a day\n"
+                + "Protein: " + targets.get("protein") + " g\n"
+                + "Carbs: " + targets.get("carbs") + " g\n"
+                + "Fat: " + targets.get("fat") + " g";
+        if (targets.get("calories") <= 1200) {
+            text += "\n\nYour goal would go lower, so the calories are raised to 1200, the safe minimum."; // UC10 2b
+        }
+        targetsLabel.setText(text);
+        return true;
+    }
+
+    private void getMealIdeas() {
+        if (!showTargets()) {
+            nutritionMessage.setText("Please set up your profile first.");
+            return;
+        }
+        String preferences = "likes: " + likesField.getText().trim() + "\ndislikes: " + dislikesField.getText().trim();
+        if (!allergiesField.getText().isBlank()) {
+            preferences += "\nallergies: " + allergiesField.getText().trim(); // these become boundaries in the profile
+        }
+        String request = preferences;
+        runInBackground("The AI is thinking of meals...", () -> app.getMealIdeas(request), this::showMealIdeas);
+    }
+
+    private void showMealIdeas(List<String> ideas) {
+        ideasBox.getChildren().clear();
+        if (ideas == null) {
+            // UC10 4a
+            nutritionMessage.setText("The AI is offline, so meal ideas are not available right now. Your daily targets still work.");
+            return;
+        }
+        if (ideas.isEmpty()) {
+            nutritionMessage.setText("The AI could not find meals that fit your allergies this time. Press Get Meal Ideas to try again.");
+            return;
+        }
+
+        nutritionMessage.setText("Accept the meals you like, so the coach remembers them, or press Regenerate for new ideas.");
+        for (String idea : ideas) {
+            Label text = new Label(idea);
+            text.setWrapText(true);
+            text.setMaxWidth(Double.MAX_VALUE);
+            HBox.setHgrow(text, Priority.ALWAYS);
+            Button acceptButton = new Button("Accept");
+            acceptButton.setOnAction(event -> {
+                app.acceptMealIdea(idea);
+                acceptButton.setText("Saved");
+                acceptButton.setDisable(true);
+            });
+            HBox row = new HBox(8, text, acceptButton);
+            row.setAlignment(Pos.CENTER_LEFT);
+            row.setStyle("-fx-background-color: #f2f2f2; -fx-padding: 8;");
+            ideasBox.getChildren().add(row);
+        }
+        Button regenerateButton = new Button("Regenerate");
+        regenerateButton.setOnAction(event -> getMealIdeas());
+        ideasBox.getChildren().add(regenerateButton);
+    }
+
+    // ----- Report tab (F11) -----
+
+    private Node buildReportTab() {
+        Button generateButton = new Button("Generate Report");
+        generateButton.setOnAction(event -> runInBackground("The AI is writing your weekly report...",
+                () -> app.generateWeeklyReport(), this::showReport));
+        saveReportButton = new Button("Save Report");
+        saveReportButton.setDisable(true);
+        saveReportButton.setOnAction(event -> {
+            app.saveReport(report);
+            reportMessage.setText("Saved as report-" + LocalDate.now() + ".txt in the data folder.");
+        });
+        reportMessage = new Label("The report looks at this week from Monday: your workouts, check-ins and records, "
+                + "with the AI's review and suggestions for next week.");
+        reportMessage.setWrapText(true);
+        reportArea = new TextArea();
+        reportArea.setEditable(false);
+        reportArea.setWrapText(true);
+        VBox.setVgrow(reportArea, Priority.ALWAYS);
+        suggestionsBox = new VBox(8);
+
+        VBox page = new VBox(10, title("Weekly report"), new HBox(8, generateButton, saveReportButton), reportMessage,
+                reportArea, suggestionsBox);
+        page.setPadding(new Insets(16));
+        return page;
+    }
+
+    private void showReport(String text) {
+        report = text;
+        reportArea.setText(text);
+        saveReportButton.setDisable(false);
+        suggestionsBox.getChildren().clear();
+
+        boolean inSuggestions = false;
+        for (String line : text.split("\n")) {
+            if (line.startsWith("Suggestions for next week:")) {
+                inSuggestions = true;
+            } else if (inSuggestions && line.matches("\\d+\\. .*")) {
+                addSuggestion(line.substring(line.indexOf(". ") + 2));
+            }
+        }
+        if (suggestionsBox.getChildren().isEmpty()) {
+            reportMessage.setText("Press Save Report to keep it. Nothing is saved until you do.");
+        } else {
+            reportMessage.setText("Apply a suggestion to change your plan, or deny it. Press Save Report to keep the report.");
+        }
+    }
+
+    // a suggestion with Apply and Deny. Apply changes the plan like Request a Change (F03)
+    private void addSuggestion(String suggestion) {
+        Label text = new Label(suggestion);
+        text.setWrapText(true);
+        text.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(text, Priority.ALWAYS);
+        Button applyButton = new Button("Apply");
+        Button denyButton = new Button("Deny");
+        HBox row = new HBox(8, text, applyButton, denyButton);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.setStyle("-fx-background-color: #f2f2f2; -fx-padding: 8;");
+
+        applyButton.setOnAction(event -> {
+            if (app.getCurrentPlan() == null) {
+                reportMessage.setText("You don't have a plan yet, so there is nothing to change.");
+                return;
+            }
+            if (pendingPlan != null) {
+                reportMessage.setText("First confirm or undo the change that is waiting on the Workout Plan page.");
+                return;
+            }
+            row.setDisable(true);
+            text.setText(suggestion + "  (applied)");
+            applySuggestion(suggestion);
+        });
+        denyButton.setOnAction(event -> {
+            row.setDisable(true); // UC11 6a: the plan stays the same
+            text.setText(suggestion + "  (denied)");
+        });
+        suggestionsBox.getChildren().add(row);
+    }
+
+    private void applySuggestion(String suggestion) {
+        changePlan(suggestion, "This change is from your weekly report: \"" + suggestion + "\". The changed workouts "
+                + "are marked with a star. Confirm or undo it.", () -> applySuggestion(suggestion));
+    }
+
+    // ----- Import tab (F12) -----
+
+    private Node buildImportTab() {
+        Label about = new Label("Import your past workouts from a .csv file, like an export from Strong or Hevy. The file needs "
+                + "columns for the date, the exercise, the reps and the weight. Nothing is saved until you press Import.");
+        about.setWrapText(true);
+        Button chooseButton = new Button("Choose File...");
+        chooseButton.setOnAction(event -> chooseImportFile());
+        previewArea = new TextArea();
+        previewArea.setEditable(false);
+        previewArea.setWrapText(true);
+        previewArea.setPrefRowCount(6);
+        previewArea.setPromptText("Choose a file to see what is in it.");
+        matchesBox = new VBox(6);
+        matchesBox.setPadding(new Insets(8));
+        matchesPane = new ScrollPane(matchesBox);
+        matchesPane.setFitToWidth(true);
+        VBox.setVgrow(matchesPane, Priority.ALWAYS); // a long list scrolls
+        Button importButton = new Button("Import");
+        importButton.setOnAction(event -> confirmImport());
+        Button cancelButton = new Button("Cancel");
+        cancelButton.setOnAction(event -> {
+            clearImport();
+            importMessage.setText("Nothing was imported."); // UC12 5a
+        });
+        importButtons = new HBox(8, importButton, cancelButton);
+        importMessage = new Label();
+        importMessage.setWrapText(true);
+        clearImport();
+
+        VBox page = new VBox(10, title("Import workout history"), about, chooseButton, previewArea, matchesPane,
+                importButtons, importMessage);
+        page.setPadding(new Insets(16));
+        return page;
+    }
+
+    private void chooseImportFile() {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Choose a workout file");
+        chooser.getExtensionFilters().addAll(new FileChooser.ExtensionFilter("CSV files", "*.csv"),
+                new FileChooser.ExtensionFilter("All files", "*.*"));
+        File sampleData = new File("sample-data");
+        if (sampleData.isDirectory()) {
+            chooser.setInitialDirectory(sampleData); // the example file that comes with the project
+        }
+        File file = chooser.showOpenDialog(tabs.getScene().getWindow());
+        if (file != null) {
+            readImportFile(file.getPath());
+        }
+    }
+
+    // F12: reads the file and shows the preview. Each exercise that is not in the library gets a box to match it by hand
+    private void readImportFile(String filePath) {
+        clearImport();
+        List<String> unmatched;
+        try {
+            unmatched = app.importWorkoutHistory(filePath);
+        } catch (IllegalArgumentException error) {
+            importMessage.setText(error.getMessage()); // UC12 2a
+            return;
+        }
+        previewArea.setText(new File(filePath).getName() + "\n" + String.join("\n", app.getImportPreview()));
+
+        if (!unmatched.isEmpty()) {
+            Label explain = new Label("These exercises are not in the library. Pick the library exercise for each one, or leave it out:");
+            explain.setWrapText(true);
+            matchesBox.getChildren().add(explain);
+            ArrayList<String> names = new ArrayList<>();
+            for (Exercise exercise : ExerciseLibrary.getInstance().getExercises()) {
+                names.add(exercise.getName());
+            }
+            names.sort(null);
+            for (String name : unmatched) {
+                ComboBox<String> box = new ComboBox<>();
+                box.getItems().add(LEAVE_OUT);
+                box.getItems().addAll(names);
+                box.setValue(LEAVE_OUT);
+                matchBoxes.put(name, box);
+                Label label = new Label(name);
+                label.setMinWidth(240);
+                HBox row = new HBox(8, label, box);
+                row.setAlignment(Pos.CENTER_LEFT);
+                matchesBox.getChildren().add(row);
+            }
+        }
+        matchesPane.setVisible(!unmatched.isEmpty());
+        matchesPane.setManaged(!unmatched.isEmpty());
+        importButtons.setVisible(true);
+        importButtons.setManaged(true);
+        importMessage.setText("Check the preview, then press Import. Cancel imports nothing.");
+    }
+
+    private void confirmImport() {
+        HashMap<String, String> matches = new HashMap<>();
+        for (Map.Entry<String, ComboBox<String>> entry : matchBoxes.entrySet()) {
+            if (!entry.getValue().getValue().equals(LEAVE_OUT)) {
+                matches.put(entry.getKey(), entry.getValue().getValue());
+            }
+        }
+        String summary = app.confirmImport(matches); // each new workout tells the dashboard (Observer pattern)
+        clearImport();
+        previewArea.setText(summary);
+        importMessage.setText("Your workouts are on the Progress Dashboard page now.");
+        refreshAll(); // the plan can start from the imported weights
+    }
+
+    private void clearImport() {
+        previewArea.clear();
+        matchesBox.getChildren().clear();
+        matchBoxes.clear();
+        matchesPane.setVisible(false);
+        matchesPane.setManaged(false);
+        importButtons.setVisible(false);
+        importButtons.setManaged(false);
+    }
+
     // ----- shared helpers -----
 
     // runs slow work, like a call to the AI, on a background thread so the window does not freeze.
@@ -1153,6 +1814,7 @@ public class Main extends Application {
         tabs.setDisable(false);
     }
 
+    // the dashboard is not here, because the workout history tells it when to refresh (Observer pattern)
     private void refreshAll() {
         refreshPlan();
         refreshWorkout();

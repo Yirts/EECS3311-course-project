@@ -18,6 +18,7 @@ import fitnesscoach.history.CheckIn;
 import fitnesscoach.history.SetLog;
 import fitnesscoach.history.WorkoutHistory;
 import fitnesscoach.history.WorkoutLog;
+import fitnesscoach.history.WorkoutObserver;
 import fitnesscoach.plan.Exercise;
 import fitnesscoach.plan.ExerciseLibrary;
 import fitnesscoach.plan.PlannedExercise;
@@ -349,6 +350,11 @@ public class FitnessAppFacade {
     /** F08: the heaviest weight lifted for the exercise on each date (the workout summary also uses it for records). */
     public Map<LocalDate, Double> getProgress(String exerciseName) {
         return history.getProgress(exerciseName);
+    }
+
+    /** F08: Observer pattern. The observer (the window's dashboard) is told each time a workout is finished or imported. */
+    public void addObserver(WorkoutObserver observer) {
+        history.addObserver(observer);
     }
 
     /** F08: adds today's body weight to the profile and saves it, for the body weight chart. */
