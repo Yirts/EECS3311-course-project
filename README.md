@@ -79,18 +79,20 @@ The same in the window: fill in the **Profile** page, press **Save Profile** and
 
 ## The window
 
+The sidebar on the left opens each page:
+
 | Page | What it does |
 |---|---|
 | Profile | Your information and notes. The AI turns the notes into boundaries (goal, days, minutes, equipment, exercises to avoid), asks follow-up questions if something is missing, and warns you to see a doctor about a serious injury. You can edit the boundaries before you confirm them (F01) |
-| Workout Plan | Generate a plan, request a change in your own words, undo the last change, swap an exercise for one of 3 options, and override a weight. A new or changed plan waits for Accept or Confirm, and changed days are marked with a star (F02, F03, F04, F06) |
-| Workout | The daily check-in (sleep, energy, stress, soreness) can make today's workout easier or harder. Then you log each set with the planned numbers filled in and a rest timer. Finish Workout shows the total, new records and your next weights (F07, F05, F06) |
-| Progress Dashboard | Strength over time for an exercise, sets for each muscle, body weight and personal records, for the last 4 weeks up to all time. A point that looks like a typo is red. The page refreshes by itself after every finished or imported workout (F08) |
-| Coach Chatbox | Ask the AI coach about your own workouts, plan and goals (F09) |
-| Nutrition | Daily calorie, protein, carb and fat targets, and meal ideas from the AI that fit your likes, dislikes and allergies (F10) |
+| Workout Plan | Generate a plan, request a change in your own words, undo the last change, swap an exercise for one of 3 options, and override a weight. A new or changed plan waits for Accept or Confirm, and changed days are marked with a star and highlighted (F02, F03, F04, F06) |
+| Workout | The daily check-in (sleep, energy, stress, soreness) can make today's workout easier or harder. Then you log each set with the planned numbers filled in (Enter logs it), a progress bar and a rest timer. Finish Workout shows the total, new records and your next weights (F07, F05, F06) |
+| Progress Dashboard | Summary tiles, then strength over time for an exercise, sets for each muscle, body weight and personal records, for the last 4 weeks up to all time. Hover a point or a bar to see its numbers. A point that looks like a typo is red. The page refreshes by itself after every finished or imported workout (F08) |
+| Coach Chatbox | Chat with the AI coach about your own workouts, plan and goals (F09) |
+| Nutrition | Daily calories with a bar for protein, carbs and fat, and meal ideas from the AI that fit your likes, dislikes and allergies (F10) |
 | Report | The AI's review of this week, with the numbers and up to 3 suggestions. Apply a suggestion to change your plan, or deny it. Save Report keeps it in the `data` folder (F11) |
-| Import | Past workouts from another app's CSV file, with a preview and a box to match each exercise the library doesn't know (F12) |
+| Import | Past workouts from another app's CSV file (choose it, or drag it onto the page), with a preview and a box to match each exercise the library doesn't know (F12) |
 
-While the AI is thinking, a spinner shows at the bottom of the window and the tabs wait.
+While the AI is thinking, a card with a spinner covers the page until it is done. A short message in the top corner confirms each action, like "Plan saved".
 
 ## CLI commands
 

@@ -24,7 +24,9 @@ import fitnesscoach.plan.ExerciseLibrary;
 import fitnesscoach.plan.PlannedExercise;
 import fitnesscoach.plan.WorkoutDay;
 import fitnesscoach.plan.WorkoutPlan;
+import javafx.animation.FadeTransition;
 import javafx.animation.KeyFrame;
+import javafx.animation.SequentialTransition;
 import javafx.animation.Timeline;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -33,8 +35,13 @@ import javafx.collections.FXCollections;
 import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.geometry.VPos;
+import javafx.scene.Group;
 import javafx.scene.Node;
 import javafx.scene.Scene;
+import javafx.scene.SnapshotParameters;
+import javafx.scene.canvas.Canvas;
+import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.chart.BarChart;
 import javafx.scene.chart.CategoryAxis;
 import javafx.scene.chart.LineChart;
@@ -50,6 +57,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
+import javafx.scene.control.ProgressBar;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
@@ -58,24 +66,37 @@ import javafx.scene.control.Spinner;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
+import javafx.scene.image.Image;
+import javafx.scene.input.TransferMode;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.RowConstraints;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import javafx.scene.shape.FillRule;
+import javafx.scene.shape.SVGPath;
+import javafx.scene.text.Font;
+import javafx.scene.text.FontWeight;
+import javafx.scene.text.TextAlignment;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.util.Duration;
 
 /**
  * The JavaFX window, with one tab for each page (the View in MVC). Each button calls the facade method with the same name.
+ * The sidebar on the left opens the pages, and style.css gives the window its look.
  * Calls to the AI run on a background thread, so the window does not freeze while the AI is thinking.
  * Observer pattern: the window is an observer of the workout history, so the dashboard refreshes after every workout.
  */
@@ -83,10 +104,27 @@ public class Main extends Application implements WorkoutObserver {
     private static final int REST_SECONDS = 90;
     private static final String LEAVE_OUT = "(leave it out)";
 
+    // the sidebar icons, simple shapes drawn on a 20 x 20 grid (SVG path format), in the same order as the pages
+    private static final String[] ICONS = {
+        "M10 2.5a3.5 3.5 0 1 1 0 7a3.5 3.5 0 1 1 0-7z M3 18a7 6 0 0 1 14 0z",
+        "M4 3h12a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M4 8v8h12V8z M6 10h3v2H6z M11 10h3v2h-3z M6 13h3v2H6z",
+        "M1 8h2v4H1z M3 6h3v8H3z M6 9h8v2H6z M14 6h3v8h-3z M17 8h2v4h-2z",
+        "M3 17v-6h3v6z M8.5 17V5h3v12z M14 17V8h3v9z M2 18h16v1.2H2z",
+        "M4 3h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H9l-4 3v-3H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M6 8h2v2H6z M9 8h2v2H9z M12 8h2v2h-2z",
+        "M10 6c-2-1.5-6-1-6 4 0 4 3 8 6 7 3 1 6-3 6-7 0-5-4-5.5-6-4z M10 5c0-2 1.5-3.5 3.5-3.5 0 2-1.5 3.5-3.5 3.5z",
+        "M5 2h7l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z M12 3v3h3z M7 9h6v1.5H7z M7 12h6v1.5H7z M7 15h4v1.5H7z",
+        "M9 2h2v8h3l-4 4-4-4h3z M3 13h2v3h10v-3h2v5H3z"
+    };
+
     private FitnessAppFacade app;
     private TabPane tabs;
+    private String stylesheet; // style.css, the look of the window and its dialogs
+    private ArrayList<Button> navButtons = new ArrayList<>(); // the sidebar, one button for each page
+    private StackPane busyOverlay; // covers the page while the AI is thinking
     private Label status;
     private ProgressIndicator busy;
+    private Label toast; // a short message that pops up after an action
+    private SequentialTransition toastAnimation;
 
     // Profile tab (F01)
     private TextField ageField;
@@ -125,6 +163,9 @@ public class Main extends Application implements WorkoutObserver {
     private Button startButton;
     private Button finishButton;
     private ListView<String> exercisesList;
+    private Label progressLabel;
+    private ProgressBar workoutProgress; // the sets done out of the sets planned
+    private HBox workoutPanels; // the exercises and the set panel
     private VBox setPanel;
     private Label currentLabel;
     private ComboBox<String> exerciseBox;
@@ -132,6 +173,7 @@ public class Main extends Application implements WorkoutObserver {
     private TextField weightInput;
     private Slider difficultySlider;
     private Label restLabel;
+    private ProgressBar restBar; // the rest time that is left
     private ListView<String> setsList;
     private TextArea summaryArea;
     private PlannedExercise prefilled; // the exercise whose planned numbers are in the boxes
@@ -150,13 +192,18 @@ public class Main extends Application implements WorkoutObserver {
     private ListView<String> recordsList;
     private TextField bodyWeightField;
     private Label dashboardMessage;
+    private Label[] tileValues = new Label[4]; // the four numbers at the top of the dashboard
+    private Label[] tileDetails = new Label[4];
     private boolean refreshingDashboard; // so filling the exercise box does not start another refresh
 
     // Coach Chatbox tab (F09)
-    private TextArea chatArea;
+    private VBox chatMessages; // the chat bubbles
+    private ScrollPane chatScroll;
     private TextField questionField;
 
     // Nutrition tab (F10)
+    private Label caloriesLabel;
+    private VBox macroBox; // a bar for each of protein, carbs and fat
     private Label targetsLabel;
     private TextField likesField;
     private TextField dislikesField;
@@ -193,18 +240,11 @@ public class Main extends Application implements WorkoutObserver {
         if (app == null) {
             app = new FitnessAppFacade("data", ".env"); // loads the saved data and the AI settings
         }
-
-        status = new Label("Ready.");
-        busy = new ProgressIndicator();
-        busy.setPrefSize(18, 18);
-        busy.setVisible(false);
-        busy.managedProperty().bind(busy.visibleProperty()); // takes no space while it is hidden
-        HBox statusBar = new HBox(8, busy, status);
-        statusBar.setAlignment(Pos.CENTER_LEFT);
-        statusBar.setPadding(new Insets(6, 12, 6, 12));
+        stylesheet = getClass().getResource("/style.css").toExternalForm();
 
         tabs = new TabPane();
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        tabs.getStyleClass().add("pages"); // the tab headers are hidden, because the sidebar opens the pages
         tabs.getTabs().add(new Tab("Profile", buildProfileTab()));
         tabs.getTabs().add(new Tab("Workout Plan", buildPlanTab()));
         tabs.getTabs().add(new Tab("Workout", buildWorkoutTab()));
@@ -217,11 +257,125 @@ public class Main extends Application implements WorkoutObserver {
         refreshAll();
         refreshDashboard();
 
-        BorderPane root = new BorderPane(tabs);
-        root.setBottom(statusBar);
+        // while the AI is thinking, a card with a spinner covers the page
+        status = new Label();
+        status.getStyleClass().add("busy-message");
+        busy = new ProgressIndicator();
+        busy.setPrefSize(44, 44);
+        VBox busyCard = new VBox(14, busy, status);
+        busyCard.setAlignment(Pos.CENTER);
+        busyCard.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
+        busyCard.getStyleClass().add("busy-card");
+        busyOverlay = new StackPane(busyCard);
+        busyOverlay.getStyleClass().add("busy-overlay");
+        busyOverlay.setVisible(false);
+
+        toast = new Label();
+        toast.getStyleClass().add("toast");
+        toast.setVisible(false);
+        toast.setMouseTransparent(true);
+        StackPane.setAlignment(toast, Pos.TOP_RIGHT); // the top corner of a page is empty, so the message covers nothing
+        StackPane.setMargin(toast, new Insets(16, 16, 0, 0));
+
+        BorderPane root = new BorderPane(new StackPane(tabs, busyOverlay, toast));
+        root.setLeft(buildSidebar());
+        Scene scene = new Scene(root, 1280, 780);
+        scene.getStylesheets().add(stylesheet);
         stage.setTitle("AI Fitness Plan Coach");
-        stage.setScene(new Scene(root, 1100, 720));
+        stage.getIcons().add(makeIcon());
+        stage.setScene(scene);
         stage.show();
+    }
+
+    // the sidebar: the app's name, a button with an icon for each page, and today's date
+    private Node buildSidebar() {
+        Label logo = new Label("AI");
+        logo.getStyleClass().add("app-logo");
+        Label name = new Label("Fitness Plan Coach");
+        name.getStyleClass().add("brand-name");
+        Label tagline = new Label("Your AI training partner");
+        tagline.getStyleClass().add("brand-tagline");
+        HBox brand = new HBox(10, logo, new VBox(1, name, tagline));
+        brand.setAlignment(Pos.CENTER_LEFT);
+
+        VBox nav = new VBox(4);
+        for (int i = 0; i < tabs.getTabs().size(); i++) {
+            int page = i;
+            SVGPath icon = new SVGPath();
+            icon.setContent(ICONS[i]);
+            icon.setFillRule(FillRule.EVEN_ODD); // shapes inside other shapes are holes, like the lines on the page icon
+            icon.getStyleClass().add("nav-icon");
+            StackPane iconBox = new StackPane(icon);
+            iconBox.setMinWidth(20); // every icon takes the same space, so the page names line up
+            iconBox.setPrefWidth(20);
+            Button button = new Button(tabs.getTabs().get(i).getText(), iconBox);
+            button.getStyleClass().add("nav-button");
+            button.setMaxWidth(Double.MAX_VALUE);
+            button.setAlignment(Pos.CENTER_LEFT);
+            button.setOnAction(event -> tabs.getSelectionModel().select(page));
+            navButtons.add(button);
+            nav.getChildren().add(button);
+        }
+        tabs.getSelectionModel().selectedIndexProperty().addListener((observable, oldPage, newPage) -> showPage(newPage.intValue()));
+        showPage(tabs.getSelectionModel().getSelectedIndex());
+
+        Region space = new Region();
+        VBox.setVgrow(space, Priority.ALWAYS);
+        Label today = new Label("Today is " + dayLabel(LocalDate.now()));
+        today.getStyleClass().add("sidebar-footer");
+
+        VBox sidebar = new VBox(28, brand, nav, space, today);
+        sidebar.setMinWidth(220);
+        sidebar.setPrefWidth(220);
+        sidebar.getStyleClass().add("sidebar");
+        return sidebar;
+    }
+
+    // marks the page's button in the sidebar, and fades the page in
+    private void showPage(int page) {
+        for (Button button : navButtons) {
+            button.getStyleClass().remove("selected");
+        }
+        navButtons.get(page).getStyleClass().add("selected");
+        FadeTransition fade = new FadeTransition(Duration.millis(200), tabs.getTabs().get(page).getContent());
+        fade.setFromValue(0);
+        fade.setToValue(1);
+        fade.play();
+    }
+
+    // the icon in the title bar and the taskbar: "AI" on a blue square
+    private Image makeIcon() {
+        Canvas canvas = new Canvas(64, 64);
+        GraphicsContext pen = canvas.getGraphicsContext2D();
+        pen.setFill(Color.web("#2f6fed"));
+        pen.fillRoundRect(0, 0, 64, 64, 20, 20);
+        pen.setFill(Color.WHITE);
+        pen.setFont(Font.font("System", FontWeight.BOLD, 28));
+        pen.setTextAlign(TextAlignment.CENTER);
+        pen.setTextBaseline(VPos.CENTER);
+        pen.fillText("AI", 32, 33);
+        SnapshotParameters parameters = new SnapshotParameters();
+        parameters.setFill(Color.TRANSPARENT); // round corners
+        return canvas.snapshot(parameters, null);
+    }
+
+    // a short message that pops up at the top of the page and fades away
+    private void showToast(String text) {
+        if (toastAnimation != null) {
+            toastAnimation.stop();
+        }
+        toast.setText("✓  " + text);
+        toast.setVisible(true);
+        FadeTransition fadeIn = new FadeTransition(Duration.millis(200), toast);
+        fadeIn.setFromValue(0);
+        fadeIn.setToValue(1);
+        FadeTransition fadeOut = new FadeTransition(Duration.millis(400), toast);
+        fadeOut.setFromValue(1);
+        fadeOut.setToValue(0);
+        fadeOut.setDelay(Duration.seconds(2.5));
+        toastAnimation = new SequentialTransition(fadeIn, fadeOut);
+        toastAnimation.setOnFinished(event -> toast.setVisible(false));
+        toastAnimation.play();
     }
 
     // ----- Profile tab (F01) -----
@@ -238,6 +392,7 @@ public class Main extends Application implements WorkoutObserver {
                 + "for 45 minutes. My left knee hurts when I squat deep.");
         Button saveButton = new Button("Save Profile");
         saveButton.setOnAction(event -> saveProfile());
+        saveButton.getStyleClass().add("primary");
 
         GridPane form = new GridPane();
         form.setHgap(8);
@@ -249,25 +404,29 @@ public class Main extends Application implements WorkoutObserver {
         Label notesLabel = new Label("Anything the AI planner should know: injuries, your goal, your equipment, "
                 + "which days you can work out and how long a workout can be.");
         notesLabel.setWrapText(true);
+        notesLabel.getStyleClass().add("hint");
         VBox left = new VBox(10, title("Your information"), form, notesLabel, notesArea, saveButton);
         left.setMinWidth(430);
         left.setMaxWidth(430);
+        left.getStyleClass().add("card");
 
         profileMessage = new Label("Fill in your information and press Save Profile. The AI turns your notes into boundaries for you to check.");
         profileMessage.setWrapText(true);
         doctorWarning = new Label();
         doctorWarning.setWrapText(true);
-        doctorWarning.setStyle("-fx-text-fill: #b00020; -fx-font-weight: bold;");
+        doctorWarning.getStyleClass().add("warning");
         questionsBox = new VBox(6);
         boundariesArea = new TextArea();
         boundariesArea.setWrapText(true);
         boundariesArea.setPrefRowCount(12);
         boundariesArea.setEditable(false);
         confirmButton = new Button("Confirm");
+        confirmButton.getStyleClass().add("primary");
         confirmButton.setDisable(true);
         confirmButton.setOnAction(event -> confirmBoundaries());
         VBox right = new VBox(10, title("Your boundaries"), profileMessage, doctorWarning, questionsBox, boundariesArea, confirmButton);
         HBox.setHgrow(right, Priority.ALWAYS);
+        right.getStyleClass().add("card");
 
         showSavedProfile();
         HBox page = new HBox(24, left, right);
@@ -382,7 +541,9 @@ public class Main extends Application implements WorkoutObserver {
         boundariesArea.setEditable(false);
         profileMessage.setText("Your profile is saved. Go to the Workout Plan page to make a plan.");
         showAllergies();
+        showTargets(); // the targets on the Nutrition page come from the profile
         refreshDashboard(); // the body weight chart has the new weight
+        showToast("Profile saved");
     }
 
     // ----- Workout Plan tab (F02, F03, F04, F06) -----
@@ -392,6 +553,7 @@ public class Main extends Application implements WorkoutObserver {
         weeksSpinner.setPrefWidth(70);
         Button generateButton = new Button("Generate Plan");
         generateButton.setOnAction(event -> generatePlan());
+        generateButton.getStyleClass().add("primary");
         requestField = new TextField();
         requestField.setPromptText("Request a change, like: only 30 minutes on tuesday");
         HBox.setHgrow(requestField, Priority.ALWAYS);
@@ -407,17 +569,33 @@ public class Main extends Application implements WorkoutObserver {
         HBox.setHgrow(pendingLabel, Priority.ALWAYS);
         keepButton = new Button("Accept");
         keepButton.setOnAction(event -> keepPending());
+        keepButton.getStyleClass().add("primary");
         dropButton = new Button("Undo");
         dropButton.setOnAction(event -> dropPending());
         Button regenerateButton = new Button("Regenerate");
         regenerateButton.setOnAction(event -> regenerate.run());
+        for (Button button : new Button[] {keepButton, dropButton, regenerateButton}) {
+            button.setMinWidth(Region.USE_PREF_SIZE); // a long message wraps instead of squeezing the buttons
+        }
         pendingBar = new HBox(8, pendingLabel, keepButton, dropButton, regenerateButton);
         pendingBar.setAlignment(Pos.CENTER_LEFT);
-        pendingBar.setStyle("-fx-background-color: #fff4cc; -fx-padding: 8;");
+        pendingBar.getStyleClass().add("pending-bar");
 
         planTable = new TableView<>();
         planTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-        planTable.getColumns().add(column("Date", 120, planned -> dateText(planned)));
+        // the rows of a changed workout are yellow, like the bar above the table
+        planTable.setRowFactory(table -> new TableRow<>() {
+            @Override
+            protected void updateItem(PlannedExercise planned, boolean empty) {
+                super.updateItem(planned, empty);
+                getStyleClass().remove("changed-day");
+                WorkoutDay day = empty ? null : dayOf.get(planned);
+                if (day != null && changedDates.contains(day.getDate())) {
+                    getStyleClass().add("changed-day");
+                }
+            }
+        });
+        planTable.getColumns().add(column("Date", 145, planned -> dateText(planned)));
         planTable.getColumns().add(column("Workout", 230, planned -> firstOfDay(planned) ? dayOf.get(planned).getNote() : ""));
         planTable.getColumns().add(column("Exercise", 190, planned -> planned.getExercise().getName()));
         planTable.getColumns().add(column("Sets x Reps", 85, planned -> planned.getSets() + " x " + planned.getReps()));
@@ -429,7 +607,9 @@ public class Main extends Application implements WorkoutObserver {
         swapButton.setOnAction(event -> swapSelected());
         Button overrideButton = new Button("Override Weight");
         overrideButton.setOnAction(event -> overrideSelected());
-        rowButtons = new HBox(8, swapButton, overrideButton, new Label("(select an exercise in the table first)"));
+        Label rowHint = new Label("(select an exercise in the table first)");
+        rowHint.getStyleClass().add("hint");
+        rowButtons = new HBox(8, swapButton, overrideButton, rowHint);
         rowButtons.setAlignment(Pos.CENTER_LEFT);
         planMessage = new Label();
         planMessage.setWrapText(true);
@@ -523,6 +703,7 @@ public class Main extends Application implements WorkoutObserver {
             Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
                     "The new plan replaces your current plan. You can bring the old one back with Undo Last Change.");
             alert.setHeaderText(null);
+            style(alert);
             Optional<ButtonType> answer = alert.showAndWait();
             if (answer.isEmpty() || answer.get() != ButtonType.OK) {
                 return;
@@ -533,6 +714,7 @@ public class Main extends Application implements WorkoutObserver {
         showPendingBar(false);
         planMessage.setText("Your plan is saved.");
         refreshAll();
+        showToast("Plan saved");
     }
 
     private void dropPending() {
@@ -555,6 +737,7 @@ public class Main extends Application implements WorkoutObserver {
         try {
             app.undoChange();
             planMessage.setText("Your plan is back to how it was before the last change.");
+            showToast("Change undone");
         } catch (IllegalStateException error) {
             planMessage.setText(error.getMessage());
         }
@@ -574,6 +757,7 @@ public class Main extends Application implements WorkoutObserver {
     private void swapExercise(PlannedExercise exercise, WorkoutDay day, Label message) {
         String name = exercise.getExercise().getName();
         ChoiceDialog<String> reasonDialog = new ChoiceDialog<>("pain", "pain", "I don't enjoy it", "the machine is being used", "something else");
+        style(reasonDialog);
         reasonDialog.setTitle("Swap Exercise");
         reasonDialog.setHeaderText("Why do you want to swap " + name + "?");
         reasonDialog.setContentText("Reason:");
@@ -585,6 +769,7 @@ public class Main extends Application implements WorkoutObserver {
         String reason = choice.get();
         if (reason.equals("something else")) {
             TextInputDialog otherDialog = new TextInputDialog();
+            style(otherDialog);
             otherDialog.setTitle("Swap Exercise");
             otherDialog.setHeaderText("Why do you want to swap " + name + "?");
             otherDialog.setContentText("Reason:");
@@ -610,7 +795,7 @@ public class Main extends Application implements WorkoutObserver {
         }
 
         VBox box = new VBox(8);
-        box.setPrefWidth(540);
+        box.setPrefWidth(640); // wide enough for each reason on one line
         ToggleGroup optionGroup = new ToggleGroup();
         for (String option : options) {
             RadioButton button = new RadioButton(option);
@@ -629,6 +814,7 @@ public class Main extends Application implements WorkoutObserver {
         box.getChildren().addAll(new Label("When:"), oneDay, restOfPlan);
 
         Dialog<ButtonType> dialog = new Dialog<>();
+        style(dialog);
         dialog.setTitle("Swap Exercise");
         dialog.setHeaderText("Pick the exercise to do instead of " + exercise.getExercise().getName());
         dialog.getDialogPane().setContent(box);
@@ -651,6 +837,7 @@ public class Main extends Application implements WorkoutObserver {
         }
         message.setText(text);
         refreshAll();
+        showToast("Exercise swapped");
     }
 
     // F06: the user's own weight for the selected exercise, from its day on
@@ -662,6 +849,7 @@ public class Main extends Application implements WorkoutObserver {
         }
 
         TextInputDialog dialog = new TextInputDialog(String.valueOf(exercise.getWeightKg()));
+        style(dialog);
         dialog.setTitle("Override Weight");
         dialog.setHeaderText("Your own weight for " + exercise.getExercise().getName() + ", from " + dayLabel(dayOf.get(exercise).getDate()) + " on");
         dialog.setContentText("Weight in kg:");
@@ -672,6 +860,7 @@ public class Main extends Application implements WorkoutObserver {
         try {
             app.overrideWeight(exercise, Double.parseDouble(typed.get().trim()));
             planMessage.setText("Saved. The coach will remember the weight you prefer.");
+            showToast("Weight saved");
         } catch (NumberFormatException error) {
             planMessage.setText("The weight must be a number.");
         } catch (IllegalArgumentException error) {
@@ -809,6 +998,7 @@ public class Main extends Application implements WorkoutObserver {
         workoutTitle = title("No workout is going on");
         startButton = new Button("Start Workout");
         startButton.setOnAction(event -> startWorkout());
+        startButton.getStyleClass().add("primary");
         finishButton = new Button("Finish Workout");
         finishButton.setOnAction(event -> finishWorkout());
         workoutMessage = new Label();
@@ -817,11 +1007,17 @@ public class Main extends Application implements WorkoutObserver {
         exercisesList = new ListView<>();
         exercisesList.setPrefWidth(430);
         exercisesList.setPrefHeight(330);
-        VBox exercisesBox = new VBox(6, new Label("The exercises:"), exercisesList);
+        VBox.setVgrow(exercisesList, Priority.ALWAYS);
+        progressLabel = new Label();
+        progressLabel.getStyleClass().add("hint");
+        workoutProgress = new ProgressBar(0);
+        workoutProgress.setMaxWidth(Double.MAX_VALUE);
+        VBox exercisesBox = new VBox(8, new Label("The exercises:"), exercisesList, progressLabel, workoutProgress);
+        exercisesBox.getStyleClass().add("card");
 
         currentLabel = new Label();
         currentLabel.setWrapText(true);
-        currentLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
+        currentLabel.getStyleClass().add("current-set");
         exerciseBox = new ComboBox<>();
         for (Exercise exercise : ExerciseLibrary.getInstance().getExercises()) {
             exerciseBox.getItems().add(exercise.getName());
@@ -829,8 +1025,10 @@ public class Main extends Application implements WorkoutObserver {
         exerciseBox.getItems().sort(null);
         repsInput = new TextField();
         repsInput.setPrefWidth(80);
+        repsInput.setOnAction(event -> logSet()); // Enter logs the set
         weightInput = new TextField();
         weightInput.setPrefWidth(80);
+        weightInput.setOnAction(event -> logSet());
         difficultySlider = slider(1, 10, 7, 1, 0);
         difficultySlider.setPrefWidth(260);
         GridPane form = new GridPane();
@@ -843,17 +1041,26 @@ public class Main extends Application implements WorkoutObserver {
 
         Button logButton = new Button("Log Set");
         logButton.setOnAction(event -> logSet());
+        logButton.getStyleClass().add("primary");
         Button skipButton = new Button("Skip Exercise");
         skipButton.setOnAction(event -> skipExercise());
         Button swapButton = new Button("Swap Exercise");
         swapButton.setOnAction(event -> swapCurrent());
         restLabel = new Label();
-        restLabel.setStyle("-fx-text-fill: #1a5fb4;");
+        restLabel.getStyleClass().add("rest-timer");
+        restBar = new ProgressBar(0);
+        restBar.setPrefWidth(220);
+        restBar.getStyleClass().add("rest-bar");
+        restBar.setVisible(false);
+        HBox restRow = new HBox(12, restLabel, restBar);
+        restRow.setAlignment(Pos.CENTER_LEFT);
         setsList = new ListView<>();
         setsList.setPrefHeight(150);
-        setPanel = new VBox(10, currentLabel, form, new HBox(8, logButton, skipButton, swapButton), restLabel,
+        setPanel = new VBox(10, currentLabel, form, new HBox(8, logButton, skipButton, swapButton), restRow,
                 new Label("Sets logged so far:"), setsList);
         HBox.setHgrow(setPanel, Priority.ALWAYS);
+        setPanel.getStyleClass().add("card");
+        workoutPanels = new HBox(16, exercisesBox, setPanel);
 
         summaryArea = new TextArea();
         summaryArea.setEditable(false);
@@ -861,8 +1068,7 @@ public class Main extends Application implements WorkoutObserver {
         VBox.setVgrow(summaryArea, Priority.ALWAYS); // the summary gets the rest of the page
         showSummary("");
 
-        HBox middle = new HBox(16, exercisesBox, setPanel);
-        VBox page = new VBox(10, workoutTitle, new HBox(8, startButton, finishButton), workoutMessage, middle, summaryArea);
+        VBox page = new VBox(10, workoutTitle, new HBox(8, startButton, finishButton), workoutMessage, workoutPanels, summaryArea);
         page.setPadding(new Insets(16));
         return page;
     }
@@ -890,6 +1096,7 @@ public class Main extends Application implements WorkoutObserver {
             String text = score;
             if (today != null && today != normalDay) {
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+                style(alert);
                 alert.setTitle("Today's Workout");
                 alert.setHeaderText("Your workout was changed for how you feel today");
                 alert.setContentText(describeDay(today));
@@ -950,6 +1157,7 @@ public class Main extends Application implements WorkoutObserver {
         grid.add(comments, 0, 4, 3, 1);
 
         Dialog<CheckIn> dialog = new Dialog<>();
+        style(dialog);
         dialog.setTitle("Daily Check-in");
         dialog.setHeaderText("How do you feel today?");
         dialog.getDialogPane().setContent(grid);
@@ -986,6 +1194,7 @@ public class Main extends Application implements WorkoutObserver {
         workoutMessage.setText("");
         startRestTimer();
         refreshWorkout();
+        showToast("Set logged");
     }
 
     private void skipExercise() {
@@ -1022,11 +1231,13 @@ public class Main extends Application implements WorkoutObserver {
         if (restTimer != null) {
             restTimer.stop();
             restLabel.setText("");
+            restBar.setVisible(false);
         }
         runInBackground("Saving your workout and working out your next weights...", () -> app.finishWorkout(), log -> {
             workoutMessage.setText("Your workout is saved.");
             showSummary(workoutSummary(log));
             refreshAll();
+            showToast("Workout saved");
         });
     }
 
@@ -1089,6 +1300,8 @@ public class Main extends Application implements WorkoutObserver {
             currentLabel.setText("Press Start Workout when you are ready.");
             repsInput.clear();
             weightInput.clear();
+            progressLabel.setText("");
+            workoutProgress.setProgress(0);
             prefilled = null;
             return;
         }
@@ -1096,16 +1309,28 @@ public class Main extends Application implements WorkoutObserver {
         WorkoutDay day = log.getDay();
         if (day == null) {
             workoutTitle.setText("Free workout, " + dayLabel(log.getDate()));
+            progressLabel.setText(log.getSets().size() + (log.getSets().size() == 1 ? " set" : " sets") + " logged");
+            workoutProgress.setProgress(0);
         } else {
             workoutTitle.setText(dayLabel(day.getDate()) + ": " + day.getNote());
+            int setsPlanned = 0;
+            int setsDone = 0;
             for (PlannedExercise planned : day.getExercises()) {
-                String state = countSets(log, planned.getExercise().getName()) + " of " + planned.getSets() + " sets done";
+                int done = countSets(log, planned.getExercise().getName());
+                String state = done + " of " + planned.getSets() + " sets done";
+                String mark = done >= planned.getSets() ? "✓  " : ""; // a tick on a finished exercise
                 if ("skipped".equals(planned.getNote())) {
                     state = "skipped";
+                    mark = "";
+                } else {
+                    setsPlanned += planned.getSets();
+                    setsDone += Math.min(done, planned.getSets());
                 }
-                exercisesList.getItems().add(planned.getExercise().getName() + ": " + planned.getSets() + " x " + planned.getReps()
+                exercisesList.getItems().add(mark + planned.getExercise().getName() + ": " + planned.getSets() + " x " + planned.getReps()
                         + ", " + weightText(planned) + "  (" + state + ")");
             }
+            progressLabel.setText(setsDone + " of " + setsPlanned + " sets done");
+            workoutProgress.setProgress(setsPlanned == 0 ? 0 : (double) setsDone / setsPlanned);
         }
         for (SetLog set : log.getSets()) {
             setsList.getItems().add(set.getExerciseName() + ": " + set.getReps() + " reps at " + set.getWeightKg() + " kg, difficulty " + set.getDifficulty());
@@ -1166,22 +1391,29 @@ public class Main extends Application implements WorkoutObserver {
         }
         restSecondsLeft = REST_SECONDS;
         restLabel.setText("Rest: " + restSecondsLeft + " seconds");
+        restBar.setProgress(1);
+        restBar.setVisible(true);
         restTimer = new Timeline(new KeyFrame(Duration.seconds(1), event -> {
             restSecondsLeft--;
+            restBar.setProgress((double) restSecondsLeft / REST_SECONDS); // the bar gets shorter as the rest runs out
             if (restSecondsLeft > 0) {
                 restLabel.setText("Rest: " + restSecondsLeft + " seconds");
             } else {
                 restLabel.setText("Rest is over. Time for the next set!");
+                restBar.setVisible(false);
             }
         }));
         restTimer.setCycleCount(REST_SECONDS);
         restTimer.play();
     }
 
+    // the summary takes the place of the exercises and the set panel, which are empty after a workout
     private void showSummary(String text) {
         summaryArea.setText(text);
         summaryArea.setVisible(!text.isEmpty());
         summaryArea.setManaged(!text.isEmpty());
+        workoutPanels.setVisible(text.isEmpty());
+        workoutPanels.setManaged(text.isEmpty());
     }
 
     // ----- Progress Dashboard tab (F08) -----
@@ -1201,6 +1433,8 @@ public class Main extends Application implements WorkoutObserver {
         controls.setAlignment(Pos.CENTER_LEFT);
         dashboardMessage = new Label();
         dashboardMessage.setWrapText(true);
+        dashboardMessage.managedProperty().bind(dashboardMessage.textProperty().isNotEmpty()); // no empty gap without a message
+        HBox tiles = new HBox(16, tile(0, "Sets"), tile(1, "Most trained"), tile(2, "Personal records"), tile(3, "Body weight"));
 
         strengthChart = lineChart("Strength: the heaviest set of each workout (kg)");
         muscleChart = new BarChart<>(new CategoryAxis(), new NumberAxis());
@@ -1208,6 +1442,7 @@ public class Main extends Application implements WorkoutObserver {
         muscleChart.setLegendVisible(false);
         muscleChart.setAnimated(false);
         bodyWeightChart = lineChart("Body weight (kg)");
+        bodyWeightChart.getStyleClass().add("body-weight-chart"); // a different colour from the strength chart
         strengthNote = new Label();
         muscleNote = new Label();
         bodyWeightNote = new Label();
@@ -1216,16 +1451,18 @@ public class Main extends Application implements WorkoutObserver {
 
         GridPane grid = new GridPane();
         grid.setHgap(16);
-        grid.setVgap(8);
+        grid.setVgap(16);
         grid.add(withNote(strengthChart, strengthNote), 0, 0);
-        grid.add(withNote(muscleChart, muscleNote), 1, 0);
-        grid.add(withNote(bodyWeightChart, bodyWeightNote), 0, 1);
+        grid.add(withNote(bodyWeightChart, bodyWeightNote), 1, 0);
+        grid.add(withNote(muscleChart, muscleNote), 0, 1);
         grid.add(withNote(recordsList, new Label("Personal records: the heaviest weight for each exercise.")), 1, 1);
+        // the left column is wider, so the muscle names fit under the bars
+        ColumnConstraints wide = new ColumnConstraints();
+        wide.setPercentWidth(60);
+        ColumnConstraints narrow = new ColumnConstraints();
+        narrow.setPercentWidth(40);
+        grid.getColumnConstraints().addAll(wide, narrow);
         for (int i = 0; i < 2; i++) {
-            // the four parts share the page equally
-            ColumnConstraints column = new ColumnConstraints();
-            column.setPercentWidth(50);
-            grid.getColumnConstraints().add(column);
             RowConstraints row = new RowConstraints();
             row.setPercentHeight(50);
             grid.getRowConstraints().add(row);
@@ -1236,9 +1473,37 @@ public class Main extends Application implements WorkoutObserver {
         chartExerciseBox.setOnAction(event -> refreshDashboard());
         rangeBox.setOnAction(event -> refreshDashboard());
 
-        VBox page = new VBox(10, title("Your progress"), controls, dashboardMessage, grid);
+        VBox page = new VBox(12, title("Your progress"), controls, dashboardMessage, tiles, grid);
         page.setPadding(new Insets(16));
         return page;
+    }
+
+    // a small card at the top of the dashboard, with a caption, a big number and a detail under it
+    private VBox tile(int index, String caption) {
+        Label name = new Label(caption);
+        name.getStyleClass().add("tile-caption");
+        tileValues[index] = new Label("-");
+        tileValues[index].getStyleClass().add("tile-value");
+        tileDetails[index] = new Label();
+        tileDetails[index].getStyleClass().add("tile-detail");
+        VBox tile = new VBox(2, name, tileValues[index], tileDetails[index]);
+        tile.getStyleClass().addAll("card", "tile");
+        tile.setPrefWidth(200); // the same width for each, so the four tiles share the row equally
+        tile.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(tile, Priority.ALWAYS);
+        return tile;
+    }
+
+    private void setTile(int index, String value, String detail) {
+        tileValues[index].setText(value);
+        tileDetails[index].setText(detail);
+    }
+
+    // a small box with the exact numbers, shown when the mouse is over a point or a bar
+    private void tip(Node node, String text) {
+        Tooltip tooltip = new Tooltip(text);
+        tooltip.setShowDelay(Duration.millis(100));
+        Tooltip.install(node, tooltip);
     }
 
     private LineChart<String, Number> lineChart(String title) {
@@ -1251,10 +1516,14 @@ public class Main extends Application implements WorkoutObserver {
         return chart;
     }
 
+    // a card with a chart (or the records list) and a short note under it
     private VBox withNote(Node chart, Label note) {
         note.setWrapText(true);
+        note.getStyleClass().add("note");
         VBox.setVgrow(chart, Priority.ALWAYS);
-        return new VBox(4, chart, note);
+        VBox card = new VBox(4, chart, note);
+        card.getStyleClass().add("card");
+        return card;
     }
 
     // Observer pattern: the workout history calls this for each finished or imported workout. The call can come from
@@ -1327,14 +1596,24 @@ public class Main extends Application implements WorkoutObserver {
         typos = drawLine(bodyWeightChart, weights);
         if (weights.isEmpty()) {
             bodyWeightNote.setText("No body weights in this range. Add today's weight above.");
+            setTile(3, "-", "add today's weight above");
         } else {
             bodyWeightNote.setText(typos);
+            double change = weights.lastEntry().getValue() - weights.firstEntry().getValue();
+            setTile(3, weights.lastEntry().getValue() + " kg", String.format("%+.1f kg since %s", change, weights.firstKey()));
         }
 
         recordsList.getItems().clear();
+        String best = "nothing lifted with a weight yet";
+        double heaviest = 0;
         for (Map.Entry<String, Double> record : records.entrySet()) {
             recordsList.getItems().add(record.getKey() + ": " + record.getValue() + " kg");
+            if (record.getValue() > heaviest) {
+                heaviest = record.getValue();
+                best = "heaviest: " + record.getKey() + ", " + record.getValue() + " kg";
+            }
         }
+        setTile(2, String.valueOf(records.size()), best);
     }
 
     private int rangeDays() {
@@ -1370,20 +1649,26 @@ public class Main extends Application implements WorkoutObserver {
         }
         chart.getData().clear();
         chart.getData().add(series);
+        // the points are made when the series is added
+        for (XYChart.Data<String, Number> point : series.getData()) {
+            tip(point.getNode(), point.getXValue() + ": " + point.getYValue() + " kg");
+        }
         for (XYChart.Data<String, Number> typo : typos) {
-            typo.getNode().setStyle("-fx-background-color: #b00020, white;"); // the point is made when the series is added
+            typo.getNode().getStyleClass().add("typo-point");
         }
         return text.trim();
     }
 
-    // the bars go A to Z, and the note says which muscles were trained most and least
+    // the bars go A to Z, and the note and the tiles say which muscles were trained most and least
     private void showMuscleSets(Map<String, Integer> muscles) {
         XYChart.Series<String, Number> series = new XYChart.Series<>();
         String most = null;
         String least = null;
         ArrayList<String> notTrained = new ArrayList<>();
+        int total = 0;
         for (Map.Entry<String, Integer> muscle : muscles.entrySet()) {
             series.getData().add(new XYChart.Data<>(muscle.getKey(), muscle.getValue()));
+            total += muscle.getValue();
             if (most == null || muscle.getValue() > muscles.get(most)) {
                 most = muscle.getKey();
             }
@@ -1396,13 +1681,25 @@ public class Main extends Application implements WorkoutObserver {
         }
         muscleChart.getData().clear();
         muscleChart.getData().add(series);
+        for (XYChart.Data<String, Number> bar : series.getData()) {
+            tip(bar.getNode(), bar.getXValue() + ": " + bar.getYValue() + " sets");
+        }
 
+        String range = "in the last " + rangeBox.getValue();
+        if (rangeBox.getValue().equals("All time")) {
+            range = "in all your workouts";
+        }
+        setTile(0, String.valueOf(total), range);
         if (most == null || muscles.get(most) == 0) {
             muscleNote.setText("No sets in this range.");
-        } else if (notTrained.isEmpty()) {
-            muscleNote.setText("Trained most: " + most + ". Trained least: " + least + ".");
+            setTile(1, "-", "no sets in this range");
         } else {
-            muscleNote.setText("Trained most: " + most + ". Not trained at all: " + String.join(", ", notTrained) + ".");
+            if (notTrained.isEmpty()) {
+                muscleNote.setText("Trained most: " + most + ". Trained least: " + least + ".");
+            } else {
+                muscleNote.setText("Trained most: " + most + ". Not trained at all: " + String.join(", ", notTrained) + ".");
+            }
+            setTile(1, most.substring(0, 1).toUpperCase() + most.substring(1), muscles.get(most) + " sets");
         }
     }
 
@@ -1414,6 +1711,7 @@ public class Main extends Application implements WorkoutObserver {
             bodyWeightField.clear();
             refreshDashboard();
             dashboardMessage.setText("Saved today's body weight: " + weightKg + " kg.");
+            showToast("Body weight saved");
         } catch (NumberFormatException error) {
             dashboardMessage.setText("The body weight must be a number, like 78.5.");
         } catch (IllegalArgumentException | IllegalStateException error) {
@@ -1424,20 +1722,25 @@ public class Main extends Application implements WorkoutObserver {
     // ----- Coach Chatbox tab (F09) -----
 
     private Node buildChatTab() {
-        chatArea = new TextArea();
-        chatArea.setEditable(false);
-        chatArea.setWrapText(true);
-        chatArea.setPromptText("Ask the coach anything about your training, like \"Why is my bench press not going up?\" or "
-                + "\"How much protein should I eat?\". The coach can see your profile, your plan and your workouts.");
-        VBox.setVgrow(chatArea, Priority.ALWAYS);
+        chatMessages = new VBox(12);
+        chatMessages.setPadding(new Insets(16));
+        chatScroll = new ScrollPane(chatMessages);
+        chatScroll.setFitToWidth(true);
+        chatScroll.getStyleClass().add("chat-list");
+        VBox.setVgrow(chatScroll, Priority.ALWAYS);
+        chatMessages.heightProperty().addListener((observable, oldHeight, newHeight) -> chatScroll.setVvalue(1)); // shows the newest message
+        addMessage("Hi! Ask me anything about your training, like \"Why is my bench press not going up?\" or "
+                + "\"How much protein should I eat?\". I can see your profile, your plan and your workouts.", false);
+
         questionField = new TextField();
         questionField.setPromptText("Type your question");
         questionField.setOnAction(event -> askCoach()); // Enter sends it too
         HBox.setHgrow(questionField, Priority.ALWAYS);
         Button sendButton = new Button("Send");
         sendButton.setOnAction(event -> askCoach());
+        sendButton.getStyleClass().add("primary");
 
-        VBox page = new VBox(10, title("Coach chat"), chatArea, new HBox(8, questionField, sendButton));
+        VBox page = new VBox(10, title("Coach chat"), chatScroll, new HBox(8, questionField, sendButton));
         page.setPadding(new Insets(16));
         return page;
     }
@@ -1448,11 +1751,32 @@ public class Main extends Application implements WorkoutObserver {
             return;
         }
         questionField.clear();
-        chatArea.appendText("You: " + question + "\n\n");
+        addMessage(question, true);
         runInBackground("The coach is thinking...", () -> app.askCoach(question), answer -> {
-            chatArea.appendText("Coach: " + answer + "\n\n");
+            addMessage(answer, false);
             questionField.requestFocus();
         });
+    }
+
+    // a chat bubble: the user's are blue on the right, and the coach's are grey on the left
+    private void addMessage(String text, boolean fromUser) {
+        Label bubble = new Label(text);
+        bubble.setWrapText(true);
+        bubble.maxWidthProperty().bind(chatScroll.widthProperty().multiply(0.7));
+        HBox row = new HBox(10);
+        if (fromUser) {
+            bubble.getStyleClass().add("bubble-user");
+            row.setAlignment(Pos.TOP_RIGHT);
+            row.getChildren().add(bubble);
+        } else {
+            bubble.getStyleClass().add("bubble-coach");
+            Label avatar = new Label("AI");
+            avatar.getStyleClass().add("avatar");
+            avatar.setMinSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
+            row.setAlignment(Pos.TOP_LEFT);
+            row.getChildren().addAll(avatar, bubble);
+        }
+        chatMessages.getChildren().add(row);
     }
 
     // ----- Nutrition tab (F10) -----
@@ -1460,12 +1784,17 @@ public class Main extends Application implements WorkoutObserver {
     private Node buildNutritionTab() {
         Button targetsButton = new Button("Calculate Targets");
         targetsButton.setOnAction(event -> showTargets());
+        caloriesLabel = new Label();
+        caloriesLabel.getStyleClass().add("big-number");
+        caloriesLabel.managedProperty().bind(caloriesLabel.textProperty().isNotEmpty());
+        macroBox = new VBox(6);
         targetsLabel = new Label("Press Calculate Targets to see how much to eat each day for your goal.");
         targetsLabel.setWrapText(true);
-        targetsLabel.setStyle("-fx-font-size: 14px;");
-        VBox left = new VBox(10, title("Daily targets"), targetsButton, targetsLabel);
+        targetsLabel.getStyleClass().add("hint");
+        VBox left = new VBox(10, title("Daily targets"), targetsButton, caloriesLabel, macroBox, targetsLabel);
         left.setMinWidth(320);
         left.setMaxWidth(320);
+        left.getStyleClass().add("card");
 
         likesField = new TextField();
         likesField.setPromptText("For example: chicken, rice, eggs");
@@ -1483,12 +1812,17 @@ public class Main extends Application implements WorkoutObserver {
         form.addRow(2, new Label("Allergies"), allergiesField);
         Button ideasButton = new Button("Get Meal Ideas");
         ideasButton.setOnAction(event -> getMealIdeas());
+        ideasButton.getStyleClass().add("primary");
         nutritionMessage = new Label();
         nutritionMessage.setWrapText(true);
         ideasBox = new VBox(8);
         VBox right = new VBox(10, title("Meal ideas"), form, ideasButton, nutritionMessage, ideasBox);
         HBox.setHgrow(right, Priority.ALWAYS);
+        right.getStyleClass().add("card");
 
+        if (app.getProfile() != null) {
+            showTargets(); // the targets are ready when the page opens
+        }
         HBox page = new HBox(24, left, right);
         page.setPadding(new Insets(16));
         return page;
@@ -1517,15 +1851,27 @@ public class Main extends Application implements WorkoutObserver {
             targetsLabel.setText(error.getMessage());
             return false;
         }
-        String text = "Calories: " + targets.get("calories") + " a day\n"
-                + "Protein: " + targets.get("protein") + " g\n"
-                + "Carbs: " + targets.get("carbs") + " g\n"
-                + "Fat: " + targets.get("fat") + " g";
+        caloriesLabel.setText(targets.get("calories") + " calories a day");
+        macroBox.getChildren().clear();
+        double calories = targets.get("protein") * 4 + targets.get("carbs") * 4 + targets.get("fat") * 9;
+        addMacro("Protein", targets.get("protein"), 4, calories, "protein-bar");
+        addMacro("Carbs", targets.get("carbs"), 4, calories, "carbs-bar");
+        addMacro("Fat", targets.get("fat"), 9, calories, "fat-bar");
+        targetsLabel.setText("Protein and carbs have 4 calories in each gram, and fat has 9.");
         if (targets.get("calories") <= 1200) {
-            text += "\n\nYour goal would go lower, so the calories are raised to 1200, the safe minimum."; // UC10 2b
+            targetsLabel.setText("Your goal would go lower, so the calories are raised to 1200, the safe minimum."); // UC10 2b
         }
-        targetsLabel.setText(text);
         return true;
+    }
+
+    // one macro: its grams and its share of the calories, with a bar
+    private void addMacro(String name, int grams, int caloriesPerGram, double calories, String barStyle) {
+        double share = grams * caloriesPerGram / calories;
+        Label text = new Label(name + ": " + grams + " g  (" + Math.round(share * 100) + "% of calories)");
+        ProgressBar bar = new ProgressBar(share);
+        bar.setMaxWidth(Double.MAX_VALUE);
+        bar.getStyleClass().add(barStyle);
+        macroBox.getChildren().addAll(text, bar);
     }
 
     private void getMealIdeas() {
@@ -1560,14 +1906,16 @@ public class Main extends Application implements WorkoutObserver {
             text.setMaxWidth(Double.MAX_VALUE);
             HBox.setHgrow(text, Priority.ALWAYS);
             Button acceptButton = new Button("Accept");
+            acceptButton.setMinWidth(Region.USE_PREF_SIZE); // a long idea wraps instead of squeezing the button
             acceptButton.setOnAction(event -> {
                 app.acceptMealIdea(idea);
                 acceptButton.setText("Saved");
                 acceptButton.setDisable(true);
+                showToast("Meal saved");
             });
             HBox row = new HBox(8, text, acceptButton);
             row.setAlignment(Pos.CENTER_LEFT);
-            row.setStyle("-fx-background-color: #f2f2f2; -fx-padding: 8;");
+            row.getStyleClass().add("item-row");
             ideasBox.getChildren().add(row);
         }
         Button regenerateButton = new Button("Regenerate");
@@ -1579,6 +1927,7 @@ public class Main extends Application implements WorkoutObserver {
 
     private Node buildReportTab() {
         Button generateButton = new Button("Generate Report");
+        generateButton.getStyleClass().add("primary");
         generateButton.setOnAction(event -> runInBackground("The AI is writing your weekly report...",
                 () -> app.generateWeeklyReport(), this::showReport));
         saveReportButton = new Button("Save Report");
@@ -1586,6 +1935,7 @@ public class Main extends Application implements WorkoutObserver {
         saveReportButton.setOnAction(event -> {
             app.saveReport(report);
             reportMessage.setText("Saved as report-" + LocalDate.now() + ".txt in the data folder.");
+            showToast("Report saved");
         });
         reportMessage = new Label("The report looks at this week from Monday: your workouts, check-ins and records, "
                 + "with the AI's review and suggestions for next week.");
@@ -1631,9 +1981,11 @@ public class Main extends Application implements WorkoutObserver {
         HBox.setHgrow(text, Priority.ALWAYS);
         Button applyButton = new Button("Apply");
         Button denyButton = new Button("Deny");
+        applyButton.setMinWidth(Region.USE_PREF_SIZE); // a long suggestion wraps instead of squeezing the buttons
+        denyButton.setMinWidth(Region.USE_PREF_SIZE);
         HBox row = new HBox(8, text, applyButton, denyButton);
         row.setAlignment(Pos.CENTER_LEFT);
-        row.setStyle("-fx-background-color: #f2f2f2; -fx-padding: 8;");
+        row.getStyleClass().add("item-row");
 
         applyButton.setOnAction(event -> {
             if (app.getCurrentPlan() == null) {
@@ -1666,8 +2018,42 @@ public class Main extends Application implements WorkoutObserver {
         Label about = new Label("Import your past workouts from a .csv file, like an export from Strong or Hevy. The file needs "
                 + "columns for the date, the exercise, the reps and the weight. Nothing is saved until you press Import.");
         about.setWrapText(true);
+        about.getStyleClass().add("hint");
         Button chooseButton = new Button("Choose File...");
+        chooseButton.getStyleClass().add("primary");
         chooseButton.setOnAction(event -> chooseImportFile());
+
+        // a file can also be dragged onto this box
+        SVGPath icon = new SVGPath();
+        icon.setContent(ICONS[7]);
+        icon.setFillRule(FillRule.EVEN_ODD);
+        icon.getStyleClass().add("drop-icon");
+        icon.setScaleX(1.8);
+        icon.setScaleY(1.8);
+        VBox dropZone = new VBox(10, new Group(icon), new Label("Drag a .csv file here, or"), chooseButton);
+        dropZone.setAlignment(Pos.CENTER);
+        dropZone.getStyleClass().add("drop-zone");
+        dropZone.setOnDragOver(event -> {
+            if (event.getDragboard().hasFiles()) {
+                event.acceptTransferModes(TransferMode.COPY);
+            }
+            event.consume();
+        });
+        dropZone.setOnDragEntered(event -> {
+            if (event.getDragboard().hasFiles()) {
+                dropZone.getStyleClass().add("drag-over"); // the box turns blue while a file is over it
+            }
+        });
+        dropZone.setOnDragExited(event -> dropZone.getStyleClass().remove("drag-over"));
+        dropZone.setOnDragDropped(event -> {
+            boolean hasFiles = event.getDragboard().hasFiles();
+            if (hasFiles) {
+                readImportFile(event.getDragboard().getFiles().get(0).getPath());
+            }
+            event.setDropCompleted(hasFiles);
+            event.consume();
+        });
+
         previewArea = new TextArea();
         previewArea.setEditable(false);
         previewArea.setWrapText(true);
@@ -1677,9 +2063,11 @@ public class Main extends Application implements WorkoutObserver {
         matchesBox.setPadding(new Insets(8));
         matchesPane = new ScrollPane(matchesBox);
         matchesPane.setFitToWidth(true);
+        matchesPane.getStyleClass().add("match-list");
         VBox.setVgrow(matchesPane, Priority.ALWAYS); // a long list scrolls
         Button importButton = new Button("Import");
         importButton.setOnAction(event -> confirmImport());
+        importButton.getStyleClass().add("primary");
         Button cancelButton = new Button("Cancel");
         cancelButton.setOnAction(event -> {
             clearImport();
@@ -1690,7 +2078,7 @@ public class Main extends Application implements WorkoutObserver {
         importMessage.setWrapText(true);
         clearImport();
 
-        VBox page = new VBox(10, title("Import workout history"), about, chooseButton, previewArea, matchesPane,
+        VBox page = new VBox(10, title("Import workout history"), about, dropZone, previewArea, matchesPane,
                 importButtons, importMessage);
         page.setPadding(new Insets(16));
         return page;
@@ -1763,6 +2151,7 @@ public class Main extends Application implements WorkoutObserver {
         clearImport();
         previewArea.setText(summary);
         importMessage.setText("Your workouts are on the Progress Dashboard page now.");
+        showToast("Workouts imported");
         refreshAll(); // the plan can start from the imported weights
     }
 
@@ -1779,10 +2168,10 @@ public class Main extends Application implements WorkoutObserver {
     // ----- shared helpers -----
 
     // runs slow work, like a call to the AI, on a background thread so the window does not freeze.
-    // The tabs are locked until it is done, and then "done" gets the result on the JavaFX thread
+    // The pages are locked under a card with a spinner until it is done, and then "done" gets the result on the JavaFX thread
     private <T> void runInBackground(String message, Callable<T> work, Consumer<T> done) {
         status.setText(message);
-        busy.setVisible(true);
+        busyOverlay.setVisible(true);
         tabs.setDisable(true);
         Task<T> task = new Task<>() {
             @Override
@@ -1809,8 +2198,7 @@ public class Main extends Application implements WorkoutObserver {
     }
 
     private void finishBackground() {
-        status.setText("Ready.");
-        busy.setVisible(false);
+        busyOverlay.setVisible(false);
         tabs.setDisable(false);
     }
 
@@ -1823,12 +2211,19 @@ public class Main extends Application implements WorkoutObserver {
     private void showError(String message) {
         Alert alert = new Alert(Alert.AlertType.ERROR, message);
         alert.setHeaderText(null);
+        style(alert);
         alert.showAndWait();
+    }
+
+    // a dialog is a separate window, so it gets the same stylesheet and opens over the main window
+    private void style(Dialog<?> dialog) {
+        dialog.initOwner(tabs.getScene().getWindow());
+        dialog.getDialogPane().getStylesheets().add(stylesheet);
     }
 
     private Label title(String text) {
         Label label = new Label(text);
-        label.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
+        label.getStyleClass().add("page-title");
         return label;
     }
 
@@ -1858,11 +2253,11 @@ public class Main extends Application implements WorkoutObserver {
         }
     }
 
+    // a red border on a field that is missing or not realistic
     private void highlight(Node field, boolean wrong) {
+        field.getStyleClass().remove("invalid");
         if (wrong) {
-            field.setStyle("-fx-border-color: #b00020; -fx-border-width: 2;");
-        } else {
-            field.setStyle("");
+            field.getStyleClass().add("invalid");
         }
     }
 

@@ -1,0 +1,668 @@
+/*
+ * The look of the window. Main adds this file to the window and to every dialog.
+ * Colours: page #f4f6fa, cards white, borders #e3e8ef, text #111827, grey text #6b7280, blue #2f6fed, sidebar navy.
+ */
+
+/* ----- Colours and font size used everywhere ----- */
+
+.root {
+    -fx-font-size: 13px;
+    -fx-background: #f4f6fa;
+    -fx-accent: #2f6fed;
+    -fx-focus-color: #2f6fed;
+    -fx-faint-focus-color: rgba(47, 111, 237, 0.15);
+    -fx-selection-bar: #dce7fd;
+    -fx-selection-bar-non-focused: #e8edf5;
+    -fx-control-inner-background-alt: #fafbfd;
+}
+
+/* ----- The pages ----- */
+
+/* the tab headers are hidden, because the sidebar opens the pages */
+.pages > .tab-header-area {
+    -fx-pref-height: 0;
+    -fx-padding: 0;
+    visibility: hidden;
+}
+
+.pages > .tab-content-area {
+    -fx-background-color: #f4f6fa;
+    -fx-padding: 0;
+}
+
+/* while the AI is thinking, the card over the page shows it, so the page itself does not fade */
+.tab-pane:disabled {
+    -fx-opacity: 1;
+}
+
+.page-title {
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #111827;
+}
+
+.hint, .note {
+    -fx-text-fill: #6b7280;
+}
+
+.warning {
+    -fx-text-fill: #b42318;
+    -fx-font-weight: bold;
+}
+
+.current-set {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #111827;
+}
+
+.rest-timer {
+    -fx-text-fill: #0d9488;
+    -fx-font-weight: bold;
+}
+
+.big-number {
+    -fx-font-size: 22px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #111827;
+}
+
+/* ----- Sidebar ----- */
+
+.sidebar {
+    -fx-background-color: linear-gradient(to bottom, #15224b, #0d1631);
+    -fx-padding: 20 12 18 12;
+}
+
+.app-logo {
+    -fx-background-color: #2f6fed;
+    -fx-background-radius: 9;
+    -fx-padding: 6 9 6 9;
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+}
+
+.brand-name {
+    -fx-text-fill: white;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
+
+.brand-tagline, .sidebar-footer {
+    -fx-text-fill: #8fa1c9;
+    -fx-font-size: 12px;
+}
+
+/* ----- Cards, tiles and rows ----- */
+
+.card {
+    -fx-background-color: white;
+    -fx-background-radius: 12;
+    -fx-border-color: #e3e8ef;
+    -fx-border-radius: 12;
+    -fx-padding: 16;
+    -fx-effect: dropshadow(gaussian, rgba(16, 24, 40, 0.06), 10, 0, 0, 2);
+}
+
+/* the four numbers at the top of the dashboard */
+.tile {
+    -fx-padding: 12 16 12 16;
+}
+
+.tile:hover {
+    -fx-effect: dropshadow(gaussian, rgba(16, 24, 40, 0.14), 16, 0, 0, 4);
+}
+
+.tile-caption, .tile-detail {
+    -fx-text-fill: #6b7280;
+    -fx-font-size: 12px;
+}
+
+.tile-value {
+    -fx-text-fill: #111827;
+    -fx-font-size: 22px;
+    -fx-font-weight: bold;
+}
+
+/* a meal idea or a report suggestion */
+.item-row {
+    -fx-background-color: white;
+    -fx-background-radius: 10;
+    -fx-border-color: #e3e8ef;
+    -fx-border-radius: 10;
+    -fx-padding: 10 12 10 14;
+}
+
+.item-row:hover {
+    -fx-border-color: #b9cdf6;
+}
+
+/* a new or changed plan that waits for Accept or Confirm */
+.pending-bar {
+    -fx-background-color: #fff8e6;
+    -fx-background-radius: 10;
+    -fx-border-color: #f3d58a;
+    -fx-border-radius: 10;
+    -fx-padding: 10 12 10 14;
+}
+
+/* the Import page's box for a dragged file */
+.drop-zone {
+    -fx-background-color: white;
+    -fx-background-radius: 12;
+    -fx-border-color: #b9c4d6;
+    -fx-border-style: dashed;
+    -fx-border-width: 1.5;
+    -fx-border-radius: 12;
+    -fx-padding: 18;
+}
+
+.drop-zone.drag-over {
+    -fx-background-color: #eef4ff;
+    -fx-border-color: #2f6fed;
+}
+
+.drop-icon {
+    -fx-fill: #2f6fed;
+}
+
+/* ----- Buttons ----- */
+
+.button {
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-background-radius: 8;
+    -fx-border-color: #cfd6e1;
+    -fx-border-radius: 8;
+    -fx-padding: 6 14 6 14;
+    -fx-text-fill: #1f2937;
+    -fx-cursor: hand;
+}
+
+.button:hover {
+    -fx-background-color: #f1f4f9;
+}
+
+.button:pressed {
+    -fx-background-color: #e4e9f1;
+}
+
+.button:focused {
+    -fx-border-color: #2f6fed;
+}
+
+/* the main button of a page, and the default button of a dialog */
+.button.primary, .button:default {
+    -fx-background-color: #2f6fed;
+    -fx-border-color: #2f6fed;
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+}
+
+.button.primary:hover, .button:default:hover {
+    -fx-background-color: #2559c9;
+    -fx-border-color: #2559c9;
+}
+
+.button.primary:pressed, .button:default:pressed {
+    -fx-background-color: #1e4aa8;
+    -fx-border-color: #1e4aa8;
+}
+
+.button.primary:focused, .button:default:focused {
+    -fx-border-color: #1e3a8a;
+}
+
+/* the page buttons in the sidebar */
+.nav-button {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+    -fx-text-fill: #c3cde6;
+    -fx-padding: 9 12 9 12;
+    -fx-graphic-text-gap: 12;
+}
+
+.nav-button:hover {
+    -fx-background-color: rgba(255, 255, 255, 0.08);
+    -fx-text-fill: white;
+}
+
+.nav-button:pressed {
+    -fx-background-color: rgba(255, 255, 255, 0.14);
+}
+
+.nav-button:focused {
+    -fx-border-color: transparent;
+}
+
+.nav-button.selected, .nav-button.selected:hover {
+    -fx-background-color: #2f6fed;
+    -fx-text-fill: white;
+}
+
+.nav-icon {
+    -fx-fill: #8fa1c9;
+}
+
+.nav-button:hover .nav-icon, .nav-button.selected .nav-icon {
+    -fx-fill: white;
+}
+
+/* ----- Text boxes and drop-downs ----- */
+
+.text-field, .text-area, .combo-box, .choice-box, .spinner {
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-background-radius: 8;
+    -fx-border-color: #cfd6e1;
+    -fx-border-radius: 8;
+}
+
+.text-field {
+    -fx-padding: 6 10 6 10;
+}
+
+.choice-box {
+    -fx-padding: 6 8 6 10;
+}
+
+/* without this, a ChoiceBox is taller than the text boxes */
+.choice-box > .label {
+    -fx-padding: 0 4 0 0;
+}
+
+.combo-box > .list-cell {
+    -fx-padding: 6 10 6 10;
+}
+
+.text-field:focused, .text-area:focused, .combo-box:focused, .choice-box:focused {
+    -fx-border-color: #2f6fed;
+}
+
+.text-area .content {
+    -fx-background-color: transparent;
+    -fx-padding: 8 10 8 10;
+}
+
+.text-area .scroll-pane, .text-area .scroll-pane > .viewport {
+    -fx-background-color: transparent;
+}
+
+.combo-box > .arrow-button, .choice-box > .open-button {
+    -fx-background-color: transparent;
+}
+
+.combo-box > .arrow-button > .arrow, .choice-box > .open-button > .arrow {
+    -fx-background-color: #6b7280;
+}
+
+/* the box inside the weeks spinner has no border of its own */
+.spinner > .text-field, .spinner > .text-field:focused {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.spinner > .increment-arrow-button, .spinner > .decrement-arrow-button {
+    -fx-background-color: transparent;
+}
+
+.spinner > .increment-arrow-button > .increment-arrow, .spinner > .decrement-arrow-button > .decrement-arrow {
+    -fx-background-color: #6b7280;
+}
+
+/* the busy card's spinning circle also has a part called "spinner", but it has no box */
+.progress-indicator .spinner {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+/* a field that is missing or not realistic */
+.invalid, .invalid:focused {
+    -fx-border-color: #d92d20;
+}
+
+/* ----- Lists and the plan table ----- */
+
+.list-view, .table-view, .match-list {
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-background-radius: 8;
+    -fx-border-color: #e3e8ef;
+    -fx-border-radius: 8;
+    -fx-padding: 3;
+}
+
+.match-list > .viewport {
+    -fx-background-color: white;
+}
+
+.list-view .list-cell {
+    -fx-padding: 6 10 6 10;
+}
+
+.table-view {
+    -fx-table-cell-border-color: #eef1f5;
+}
+
+.table-view .column-header-background {
+    -fx-background-color: white;
+}
+
+.table-view .column-header, .table-view .filler {
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-border-color: transparent transparent #e3e8ef transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.table-view .column-header .label {
+    -fx-text-fill: #6b7280;
+    -fx-font-weight: bold;
+    -fx-alignment: center-left;
+    -fx-padding: 6 8 6 8;
+}
+
+.table-row-cell, .table-view .table-cell {
+    -fx-cell-size: 2.4em;
+}
+
+.table-view .table-cell {
+    -fx-padding: 0 8 0 8;
+    -fx-border-color: transparent;
+}
+
+/* rows light up under the mouse, and the rows of a changed workout are yellow */
+.table-row-cell:filled:hover, .list-view .list-cell:filled:hover {
+    -fx-background: #f3f7ff;
+}
+
+.table-row-cell.changed-day {
+    -fx-background: #fff6dd;
+}
+
+.table-row-cell:filled:selected, .list-view .list-cell:filled:selected {
+    -fx-background: -fx-selection-bar;
+}
+
+.placeholder .label {
+    -fx-text-fill: #6b7280;
+}
+
+.corner {
+    -fx-background-color: transparent;
+}
+
+/* ----- Coach chat ----- */
+
+.chat-list {
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-background-radius: 12;
+    -fx-border-color: #e3e8ef;
+    -fx-border-radius: 12;
+    -fx-padding: 2;
+}
+
+.chat-list > .viewport {
+    -fx-background-color: white;
+}
+
+.bubble-user {
+    -fx-background-color: #2f6fed;
+    -fx-background-radius: 16 16 4 16;
+    -fx-text-fill: white;
+    -fx-padding: 9 14 9 14;
+}
+
+.bubble-coach {
+    -fx-background-color: #f1f4f9;
+    -fx-background-radius: 16 16 16 4;
+    -fx-text-fill: #111827;
+    -fx-padding: 9 14 9 14;
+}
+
+.avatar {
+    -fx-background-color: #2f6fed;
+    -fx-background-radius: 16;
+    -fx-text-fill: white;
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-alignment: center;
+    -fx-pref-width: 32;
+    -fx-pref-height: 32;
+}
+
+/* ----- Progress bars: the workout, the rest timer and the macros ----- */
+
+.progress-bar > .track {
+    -fx-background-color: #e8ecf3;
+    -fx-background-insets: 0;
+    -fx-background-radius: 6;
+}
+
+.progress-bar > .bar {
+    -fx-background-color: #2f6fed;
+    -fx-background-insets: 0;
+    -fx-background-radius: 6;
+    -fx-padding: 4;
+}
+
+.rest-bar > .bar {
+    -fx-background-color: #0d9488;
+}
+
+.protein-bar > .bar {
+    -fx-background-color: #2f6fed;
+}
+
+.carbs-bar > .bar {
+    -fx-background-color: #f59e0b;
+}
+
+.fat-bar > .bar {
+    -fx-background-color: #e11d48;
+}
+
+/* ----- Charts on the Progress Dashboard ----- */
+
+.chart-title {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #111827;
+}
+
+.chart-plot-background {
+    -fx-background-color: transparent;
+}
+
+.chart-vertical-grid-lines {
+    -fx-stroke: transparent;
+}
+
+.chart-horizontal-grid-lines {
+    -fx-stroke: #edf0f5;
+}
+
+.chart-vertical-zero-line, .chart-horizontal-zero-line {
+    -fx-stroke: #d6dce6;
+}
+
+.axis {
+    -fx-tick-label-fill: #6b7280;
+}
+
+.axis-tick-mark, .axis-minor-tick-mark {
+    -fx-stroke: #d6dce6;
+}
+
+.default-color0.chart-series-line {
+    -fx-stroke: #2f6fed;
+    -fx-stroke-width: 2.5px;
+}
+
+.default-color0.chart-line-symbol {
+    -fx-background-color: #2f6fed, white;
+}
+
+/* a point grows under the mouse, and its tooltip shows the date and the weight */
+.chart-line-symbol:hover {
+    -fx-scale-x: 1.6;
+    -fx-scale-y: 1.6;
+}
+
+.chart-bar {
+    -fx-background-color: -fx-bar-fill;
+    -fx-background-insets: 0;
+    -fx-background-radius: 5 5 0 0;
+}
+
+.chart-bar:hover {
+    -fx-opacity: 0.8;
+}
+
+.default-color0.chart-bar {
+    -fx-bar-fill: #2f6fed;
+}
+
+/* the body weight chart is green, so it looks different from the strength chart */
+.body-weight-chart .default-color0.chart-series-line {
+    -fx-stroke: #0d9488;
+}
+
+.body-weight-chart .default-color0.chart-line-symbol {
+    -fx-background-color: #0d9488, white;
+}
+
+/* a point that could be a typo (UC08 3b) */
+.chart .chart-line-symbol.typo-point {
+    -fx-background-color: #dc2626, white;
+}
+
+.tooltip {
+    -fx-background-color: #111827;
+    -fx-background-radius: 6;
+    -fx-text-fill: white;
+    -fx-font-size: 12px;
+    -fx-padding: 6 10 6 10;
+}
+
+/* ----- Sliders in the check-in window ----- */
+
+.slider .track {
+    -fx-background-color: #e3e8ef;
+    -fx-background-insets: 0;
+    -fx-background-radius: 4;
+}
+
+.slider .thumb {
+    -fx-background-color: white, #2f6fed;
+    -fx-background-insets: 0, 3;
+    -fx-background-radius: 10;
+    -fx-padding: 8;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.25), 3, 0, 0, 1);
+}
+
+/* ----- Scroll bars ----- */
+
+.scroll-bar {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar > .track, .scroll-bar > .track-background {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.scroll-bar > .thumb {
+    -fx-background-color: #cbd3df;
+    -fx-background-insets: 2;
+    -fx-background-radius: 6;
+}
+
+.scroll-bar > .thumb:hover {
+    -fx-background-color: #aeb8c7;
+}
+
+.scroll-bar > .increment-button, .scroll-bar > .decrement-button {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar > .increment-button > .increment-arrow, .scroll-bar > .decrement-button > .decrement-arrow {
+    -fx-background-color: #9aa5b5;
+}
+
+/* ----- Drop-down menus ----- */
+
+.context-menu {
+    -fx-background-color: white;
+    -fx-background-insets: 0;
+    -fx-background-radius: 8;
+    -fx-border-color: #e3e8ef;
+    -fx-border-radius: 8;
+    -fx-padding: 4;
+}
+
+.context-menu .menu-item {
+    -fx-background-radius: 6;
+    -fx-padding: 6 12 6 12;
+}
+
+.context-menu .menu-item:focused {
+    -fx-background-color: #e8f0fe;
+}
+
+.context-menu .menu-item:focused .label {
+    -fx-text-fill: #111827;
+}
+
+/* ----- The busy card, the pop-up message and the dialogs ----- */
+
+.busy-overlay {
+    -fx-background-color: rgba(244, 246, 250, 0.72);
+}
+
+.busy-card {
+    -fx-background-color: white;
+    -fx-background-radius: 14;
+    -fx-border-color: #e3e8ef;
+    -fx-border-radius: 14;
+    -fx-padding: 24 32 24 32;
+    -fx-effect: dropshadow(gaussian, rgba(16, 24, 40, 0.18), 24, 0, 0, 6);
+}
+
+.busy-message {
+    -fx-font-size: 14px;
+    -fx-text-fill: #111827;
+}
+
+.toast {
+    -fx-background-color: #111827;
+    -fx-background-radius: 10;
+    -fx-text-fill: white;
+    -fx-padding: 10 18 10 18;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.25), 14, 0, 0, 4);
+}
+
+.dialog-pane {
+    -fx-background-color: white;
+}
+
+.dialog-pane > .header-panel {
+    -fx-background-color: #f4f6fa;
+    -fx-border-color: transparent transparent #e3e8ef transparent;
+    -fx-padding: 14 18 14 18;
+}
+
+.dialog-pane > .header-panel .label {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #111827;
+}
+
+.dialog-pane > .content {
+    -fx-padding: 16 18 10 18;
+}
+
+.dialog-pane > .button-bar > .container {
+    -fx-padding: 10 18 16 18;
+}
